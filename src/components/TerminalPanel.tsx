@@ -21,7 +21,13 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const isActiveRef = useRef(isActive)
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
+
+  // Keep isActiveRef in sync with isActive prop (fixes closure issue in ResizeObserver)
+  useEffect(() => {
+    isActiveRef.current = isActive
+  }, [isActive])
 
   // Handle paste with text size checking
   const handlePasteText = (text: string) => {
@@ -124,39 +130,39 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
     if (!containerRef.current) return
 
     // Create terminal instance
-    // Novel theme (macOS Terminal.app inspired)
     const terminal = new Terminal({
       theme: {
-        background: '#1f1d1a',
-        foreground: '#dfdbc3',
-        cursor: '#dfdbc3',
-        cursorAccent: '#1f1d1a',
-        selectionBackground: '#5c5142',
-        black: '#3b3228',
-        red: '#cb6077',
-        green: '#beb55b',
-        yellow: '#f4bc87',
-        blue: '#8ab3b5',
-        magenta: '#a89bb9',
-        cyan: '#7bbda4',
-        white: '#d0c8c6',
-        brightBlack: '#554d46',
-        brightRed: '#cb6077',
-        brightGreen: '#beb55b',
-        brightYellow: '#f4bc87',
-        brightBlue: '#8ab3b5',
-        brightMagenta: '#a89bb9',
-        brightCyan: '#7bbda4',
-        brightWhite: '#f5f1e6'
+        background: '#1e1e1e',
+        foreground: '#cccccc',
+        cursor: '#ffffff',
+        cursorAccent: '#000000',
+        selectionBackground: '#264f78',
+        black: '#000000',
+        red: '#cd3131',
+        green: '#0dbc79',
+        yellow: '#e5e510',
+        blue: '#2472c8',
+        magenta: '#bc3fbc',
+        cyan: '#11a8cd',
+        white: '#e5e5e5',
+        brightBlack: '#666666',
+        brightRed: '#f14c4c',
+        brightGreen: '#23d18b',
+        brightYellow: '#f5f543',
+        brightBlue: '#3b8eea',
+        brightMagenta: '#d670d6',
+        brightCyan: '#29b8db',
+        brightWhite: '#e5e5e5'
       },
       fontSize: 14,
-      fontFamily: '"SF Mono", Menlo, Monaco, "Courier New", monospace',
+      fontFamily: 'Consolas, Monaco, "Courier New", monospace',
       cursorBlink: true,
       scrollback: 10000,
       convertEol: true,
       allowProposedApi: true,
       allowTransparency: true,
-      scrollOnOutput: true
+      scrollOnOutput: true,
+      windowsMode: true
     })
 
     const fitAddon = new FitAddon()
@@ -209,6 +215,15 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
 
     // Handle copy and paste shortcuts
     terminal.attachCustomKeyEventHandler((event) => {
+      // Let Ctrl+Tab and Ctrl+Alt+Tab bubble up for terminal/workspace switching
+      if (event.ctrlKey && event.key === 'Tab') {
+        return false // Don't handle in xterm, let it bubble to document
+      }
+      // Let Ctrl+[ and Ctrl+] bubble up for workspace switching
+      if (event.ctrlKey && (event.key === '[' || event.key === ']')) {
+        return false
+      }
+
       // Ctrl+Shift+C for copy
       if (event.ctrlKey && event.shiftKey && event.key === 'C') {
         const selection = terminal.getSelection()
@@ -274,8 +289,8 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
 
     // Handle resize
     const resizeObserver = new ResizeObserver(() => {
-      // Only resize if terminal is currently active
-      if (isActive) {
+      // Only resize if terminal is currently active (use ref to get current value)
+      if (isActiveRef.current) {
         fitAddon.fit()
         const { cols, rows } = terminal
         window.electronAPI.pty.resize(terminalId, cols, rows)

@@ -17,7 +17,7 @@ try {
 
 interface PtyInstance {
   process: any // IPty or ChildProcess
-  type: 'terminal' | 'claude-code'
+  type: 'terminal' | 'claude code'
   cwd: string
   usePty: boolean
 }
@@ -63,12 +63,22 @@ export class PtyManager {
   create(options: CreatePtyOptions): boolean {
     const { id, cwd, type, shell: shellOverride } = options
 
-    const shell = shellOverride || this.getDefaultShell()
+    let executable: string
     let args: string[] = []
 
-    // For PowerShell (pwsh or powershell), bypass execution policy to allow unsigned scripts
-    if (shell.includes('powershell') || shell.includes('pwsh')) {
-      args = ['-ExecutionPolicy', 'Bypass', '-NoLogo']
+    if (type === 'claude-code') {
+      // For Claude Code terminals, spawn cc-watch.sh script
+      const os = require('os')
+      executable = require('path').join(os.homedir(), 'Job', 'cc-watch.sh')
+      args = []
+    } else {
+      // For regular terminals, use the shell
+      executable = shellOverride || this.getDefaultShell()
+
+      // For PowerShell (pwsh or powershell), bypass execution policy to allow unsigned scripts
+      if (executable.includes('powershell') || executable.includes('pwsh')) {
+        args = ['-ExecutionPolicy', 'Bypass', '-NoLogo']
+      }
     }
 
     // Try node-pty first, fallback to child_process if it fails
@@ -85,7 +95,7 @@ export class PtyManager {
           PYTHONUTF8: '1'
         }
 
-        const ptyProcess = pty.spawn(shell, args, {
+        const ptyProcess = pty.spawn(executable, args, {
           name: 'xterm-256color',
           cols: 120,
           rows: 30,
@@ -94,15 +104,11 @@ export class PtyManager {
         })
 
         ptyProcess.onData((data: string) => {
-          if (!this.window.isDestroyed()) {
-            this.window.webContents.send('pty:output', id, data)
-          }
+          this.window.webContents.send('pty:output', id, data)
         })
 
         ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
-          if (!this.window.isDestroyed()) {
-            this.window.webContents.send('pty:exit', id, exitCode)
-          }
+          this.window.webContents.send('pty:exit', id, exitCode)
           this.instances.delete(id)
         })
 
@@ -120,7 +126,7 @@ export class PtyManager {
         // Fallback to child_process with proper stdio
         // For PowerShell, add -NoExit and UTF-8 command
         let shellArgs = [...args]
-        if (shell.includes('powershell') || shell.includes('pwsh')) {
+        if (executable.includes('powershell') || executable.includes('pwsh')) {
           shellArgs.push(
             '-NoExit',
             '-Command',
@@ -137,7 +143,7 @@ export class PtyManager {
           PYTHONUTF8: '1'
         }
 
-        const childProcess = spawn(shell, shellArgs, {
+        const childProcess = spawn(executable, shellArgs, {
           cwd,
           env: envWithUtf8 as NodeJS.ProcessEnv,
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -145,35 +151,25 @@ export class PtyManager {
         })
 
         childProcess.stdout?.on('data', (data: Buffer) => {
-          if (!this.window.isDestroyed()) {
-            this.window.webContents.send('pty:output', id, data.toString())
-          }
+          this.window.webContents.send('pty:output', id, data.toString())
         })
 
         childProcess.stderr?.on('data', (data: Buffer) => {
-          if (!this.window.isDestroyed()) {
-            this.window.webContents.send('pty:output', id, data.toString())
-          }
+          this.window.webContents.send('pty:output', id, data.toString())
         })
 
         childProcess.on('exit', (exitCode: number | null) => {
-          if (!this.window.isDestroyed()) {
-            this.window.webContents.send('pty:exit', id, exitCode ?? 0)
-          }
+          this.window.webContents.send('pty:exit', id, exitCode ?? 0)
           this.instances.delete(id)
         })
 
         childProcess.on('error', (error) => {
           console.error('Child process error:', error)
-          if (!this.window.isDestroyed()) {
-            this.window.webContents.send('pty:output', id, `\r\n[Error: ${error.message}]\r\n`)
-          }
+          this.window.webContents.send('pty:output', id, `\r\n[Error: ${error.message}]\r\n`)
         })
 
         // Send initial message
-        if (!this.window.isDestroyed()) {
-          this.window.webContents.send('pty:output', id, `[Terminal - child_process mode]\r\n`)
-        }
+        this.window.webContents.send('pty:output', id, `[Terminal - child_process mode]\r\n`)
 
         this.instances.set(id, { process: childProcess, type, cwd, usePty: false })
         console.log('Created terminal using child_process fallback')

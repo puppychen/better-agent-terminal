@@ -23,6 +23,50 @@ export default function App() {
       workspaceStore.updateTerminalActivity(id)
     })
 
+    // Global keyboard shortcuts for terminal/workspace switching
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Debug: log all key events with modifiers
+      if (e.ctrlKey || e.altKey || e.metaKey) {
+        console.log('Key event:', { key: e.key, code: e.code, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey, metaKey: e.metaKey })
+      }
+
+      // Ctrl+Tab / Ctrl+Shift+Tab - Terminal switching
+      if (e.ctrlKey && !e.altKey && e.key === 'Tab') {
+        e.preventDefault()
+        console.log('Terminal switch triggered')
+        if (e.shiftKey) {
+          workspaceStore.switchToPreviousTerminal()
+        } else {
+          workspaceStore.switchToNextTerminal()
+        }
+      }
+
+      // Ctrl+Alt+Tab / Ctrl+Alt+Shift+Tab - Workspace switching
+      // Also support Cmd+Option+Tab on macOS
+      if ((e.ctrlKey || e.metaKey) && e.altKey && e.key === 'Tab') {
+        e.preventDefault()
+        console.log('Workspace switch triggered')
+        if (e.shiftKey) {
+          workspaceStore.switchToPreviousWorkspace()
+        } else {
+          workspaceStore.switchToNextWorkspace()
+        }
+      }
+
+      // Alternative: Ctrl+[ and Ctrl+] for workspace switching (works better cross-platform)
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === '[' || e.key === ']')) {
+        e.preventDefault()
+        console.log('Workspace switch (bracket) triggered')
+        if (e.key === '[') {
+          workspaceStore.switchToPreviousWorkspace()
+        } else {
+          workspaceStore.switchToNextWorkspace()
+        }
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+
     // Load saved workspaces and settings on startup
     workspaceStore.load()
     settingsStore.load()
@@ -30,6 +74,7 @@ export default function App() {
     return () => {
       unsubscribe()
       unsubscribeOutput()
+      document.removeEventListener('keydown', handleKeyDown)
     }
   }, [])
 
@@ -58,9 +103,6 @@ export default function App() {
         onRenameWorkspace={(id, alias) => {
           workspaceStore.renameWorkspace(id, alias)
           workspaceStore.save()
-        }}
-        onSetWorkspaceRole={(id, role) => {
-          workspaceStore.setWorkspaceRole(id, role)
         }}
         onOpenSettings={() => setShowSettings(true)}
         onOpenAbout={() => setShowAbout(true)}

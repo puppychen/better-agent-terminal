@@ -85,18 +85,6 @@ class WorkspaceStore {
     this.notify()
   }
 
-  setWorkspaceRole(id: string, role: string): void {
-    this.state = {
-      ...this.state,
-      workspaces: this.state.workspaces.map(w =>
-        w.id === id ? { ...w, role: role.trim() || undefined } : w
-      )
-    }
-
-    this.notify()
-    this.save()
-  }
-
   // Terminal actions
   addTerminal(workspaceId: string, type: 'terminal' | 'claude-code'): TerminalInstance {
     const workspace = this.state.workspaces.find(w => w.id === workspaceId)
@@ -228,6 +216,50 @@ class WorkspaceStore {
       .filter((time): time is number => time !== undefined)
 
     return lastActivities.length > 0 ? Math.max(...lastActivities) : null
+  }
+
+  // Terminal switching
+  switchToNextTerminal(): void {
+    const { activeWorkspaceId, focusedTerminalId } = this.state
+    if (!activeWorkspaceId) return
+
+    const terminals = this.getWorkspaceTerminals(activeWorkspaceId)
+    if (terminals.length <= 1) return
+
+    const currentIndex = terminals.findIndex(t => t.id === focusedTerminalId)
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % terminals.length
+    this.setFocusedTerminal(terminals[nextIndex].id)
+  }
+
+  switchToPreviousTerminal(): void {
+    const { activeWorkspaceId, focusedTerminalId } = this.state
+    if (!activeWorkspaceId) return
+
+    const terminals = this.getWorkspaceTerminals(activeWorkspaceId)
+    if (terminals.length <= 1) return
+
+    const currentIndex = terminals.findIndex(t => t.id === focusedTerminalId)
+    const prevIndex = currentIndex <= 0 ? terminals.length - 1 : currentIndex - 1
+    this.setFocusedTerminal(terminals[prevIndex].id)
+  }
+
+  // Workspace switching
+  switchToNextWorkspace(): void {
+    const { workspaces, activeWorkspaceId } = this.state
+    if (workspaces.length <= 1) return
+
+    const currentIndex = workspaces.findIndex(w => w.id === activeWorkspaceId)
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % workspaces.length
+    this.setActiveWorkspace(workspaces[nextIndex].id)
+  }
+
+  switchToPreviousWorkspace(): void {
+    const { workspaces, activeWorkspaceId } = this.state
+    if (workspaces.length <= 1) return
+
+    const currentIndex = workspaces.findIndex(w => w.id === activeWorkspaceId)
+    const prevIndex = currentIndex <= 0 ? workspaces.length - 1 : currentIndex - 1
+    this.setActiveWorkspace(workspaces[prevIndex].id)
   }
 
   // Persistence

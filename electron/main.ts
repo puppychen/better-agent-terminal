@@ -20,8 +20,7 @@ function createWindow() {
     },
     frame: true,
     titleBarStyle: 'default',
-    title: 'Better Agent Terminal',
-    icon: path.join(__dirname, '../assets/icon.ico')
+    title: 'Better Agent Terminal'
   })
 
   ptyManager = new PtyManager(mainWindow)
@@ -126,40 +125,39 @@ ipcMain.handle('settings:load', async () => {
 ipcMain.handle('settings:get-shell-path', async (_event, shellType: string) => {
   const fs = await import('fs')
 
-  // macOS and Linux support
-  if (process.platform === 'darwin' || process.platform === 'linux') {
-    if (shellType === 'auto') {
-      return process.env.SHELL || '/bin/zsh'
-    }
-    // For non-auto, return the shellType as-is (custom path) or default shell
-    if (shellType === 'pwsh' || shellType === 'powershell' || shellType === 'cmd') {
-      // Windows shells requested on Unix - fall back to default
-      return process.env.SHELL || '/bin/zsh'
-    }
-    return shellType // custom path
+  // Handle auto - return undefined to let pty-manager use its cross-platform logic
+  if (shellType === 'auto') {
+    return undefined
   }
 
-  // Windows support
-  if (shellType === 'auto' || shellType === 'pwsh') {
-    const pwshPaths = [
-      'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
-      'C:\\Program Files (x86)\\PowerShell\\7\\pwsh.exe',
-      process.env.LOCALAPPDATA + '\\Microsoft\\WindowsApps\\pwsh.exe'
-    ]
-    for (const p of pwshPaths) {
-      if (fs.existsSync(p)) {
-        return p
+  // Windows-specific shells
+  if (process.platform === 'win32') {
+    if (shellType === 'pwsh') {
+      const pwshPaths = [
+        'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+        'C:\\Program Files (x86)\\PowerShell\\7\\pwsh.exe',
+        process.env.LOCALAPPDATA + '\\Microsoft\\WindowsApps\\pwsh.exe'
+      ]
+      for (const p of pwshPaths) {
+        if (fs.existsSync(p)) {
+          return p
+        }
       }
+      return 'pwsh.exe'
     }
-    if (shellType === 'pwsh') return 'pwsh.exe'
+
+    if (shellType === 'powershell') {
+      return 'powershell.exe'
+    }
+
+    if (shellType === 'cmd') {
+      return 'cmd.exe'
+    }
   }
 
-  if (shellType === 'auto' || shellType === 'powershell') {
-    return 'powershell.exe'
-  }
-
-  if (shellType === 'cmd') {
-    return 'cmd.exe'
+  // macOS/Linux - return undefined for default shells to use pty-manager logic
+  if (shellType === 'zsh' || shellType === 'bash') {
+    return undefined // Let pty-manager handle it
   }
 
   return shellType // custom path
