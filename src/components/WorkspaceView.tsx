@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState } from 'react'
+import { useEffect, useCallback, useState, useRef } from 'react'
 import type { Workspace, TerminalInstance } from '../types'
 import { workspaceStore } from '../stores/workspace-store'
 import { settingsStore } from '../stores/settings-store'
@@ -24,6 +24,8 @@ async function getShellFromSettings(): Promise<string | undefined> {
 
 export function WorkspaceView({ workspace, terminals, focusedTerminalId }: WorkspaceViewProps) {
   const [showCloseConfirm, setShowCloseConfirm] = useState<string | null>(null)
+  // Track workspaceId to allow creating Claude Code for different workspaces
+  const creatingClaudeCodeRef = useRef<string | null>(null)
 
   const claudeCode = terminals.find(t => t.type === 'claude-code')
   const regularTerminals = terminals.filter(t => t.type === 'terminal')
@@ -32,11 +34,15 @@ export function WorkspaceView({ workspace, terminals, focusedTerminalId }: Works
   const isClaudeCodeFocused = focusedTerminal?.type === 'claude-code'
 
   // Initialize Claude Code terminal when workspace loads
+  // Using ref to track which workspace we're creating for, allowing different workspaces to create their own
   useEffect(() => {
-    if (!claudeCode) {
+    if (!claudeCode && creatingClaudeCodeRef.current !== workspace.id) {
+      creatingClaudeCodeRef.current = workspace.id
       const createClaudeCode = async () => {
         const terminal = workspaceStore.addTerminal(workspace.id, 'claude-code')
         const shell = await getShellFromSettings()
+
+        // Always create a new session (don't restore old session to avoid "already in use" conflicts)
         window.electronAPI.pty.create({
           id: terminal.id,
           cwd: workspace.folderPath,

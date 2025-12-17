@@ -46,9 +46,13 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
+  // Dispose PTY manager before window is destroyed to prevent IPC errors
+  mainWindow.on('close', () => {
+    ptyManager?.dispose()
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
-    ptyManager?.dispose()
     ptyManager = null
     // Stop power save blocker
     if (powerSaveBlockerId !== null) {

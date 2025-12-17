@@ -5,6 +5,7 @@ export interface Workspace {
   role?: string;
   folderPath: string;
   createdAt: number;
+  claudeSessionId?: string;
 }
 
 // Preset roles for quick selection
@@ -43,6 +44,7 @@ export interface CreatePtyOptions {
   cwd: string;
   type: 'terminal' | 'claude-code';
   shell?: string;
+  sessionId?: string;
 }
 
 export interface PtyOutput {

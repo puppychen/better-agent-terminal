@@ -26,9 +26,17 @@ interface PtyInstance {
 export class PtyManager {
   private instances: Map<string, PtyInstance> = new Map()
   private window: BrowserWindow
+  private disposed = false
 
   constructor(window: BrowserWindow) {
     this.window = window
+  }
+
+  // Safe IPC send - checks if window is still valid before sending
+  private safeSend(channel: string, ...args: unknown[]): void {
+    if (!this.disposed && !this.window.isDestroyed()) {
+      this.window.webContents.send(channel, ...args)
+    }
   }
 
   private findHappyExecutable(): string {
@@ -180,7 +188,7 @@ export class PtyManager {
   }
 
   create(options: CreatePtyOptions): boolean {
-    const { id, cwd, type, shell: shellOverride } = options
+    const { id, cwd, type, shell: shellOverride, sessionId } = options
 
     let executable: string
     let args: string[] = []
@@ -188,7 +196,8 @@ export class PtyManager {
     if (type === 'claude-code') {
       // For Claude Code terminals, use happy (https://happy.engineering/)
       executable = this.findHappyExecutable()
-      args = []
+      // Pass session-id to resume previous conversation
+      args = sessionId ? ['--session-id', sessionId] : []
     } else {
       // For regular terminals, use the shell
       executable = shellOverride || this.getDefaultShell()
@@ -235,11 +244,11 @@ export class PtyManager {
               }
             }
           }
-          this.window.webContents.send('pty:output', id, data)
+          this.safeSend('pty:output', id, data)
         })
 
         ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
-          this.window.webContents.send('pty:exit', id, exitCode)
+          this.safeSend('pty:exit', id, exitCode)
           this.instances.delete(id)
         })
 
@@ -295,7 +304,7 @@ export class PtyManager {
               }
             }
           }
-          this.window.webContents.send('pty:output', id, str)
+          this.safeSend('pty:output', id, str)
         })
 
         childProcess.stderr?.on('data', (data: Buffer) => {
@@ -311,21 +320,21 @@ export class PtyManager {
               }
             }
           }
-          this.window.webContents.send('pty:output', id, str)
+          this.safeSend('pty:output', id, str)
         })
 
         childProcess.on('exit', (exitCode: number | null) => {
-          this.window.webContents.send('pty:exit', id, exitCode ?? 0)
+          this.safeSend('pty:exit', id, exitCode ?? 0)
           this.instances.delete(id)
         })
 
         childProcess.on('error', (error) => {
           console.error('Child process error:', error)
-          this.window.webContents.send('pty:output', id, `\r\n[Error: ${error.message}]\r\n`)
+          this.safeSend('pty:output', id, `\r\n[Error: ${error.message}]\r\n`)
         })
 
         // Send initial message
-        this.window.webContents.send('pty:output', id, `[Terminal - child_process mode]\r\n`)
+        this.safeSend('pty:output', id, `[Terminal - child_process mode]\r\n`)
 
         this.instances.set(id, { process: childProcess, type, cwd, usePty: false, outputBuffer: [] })
         console.log('Created terminal using child_process fallback, id:', id)
@@ -413,6 +422,7 @@ export class PtyManager {
   }
 
   dispose(): void {
+    this.disposed = true
     for (const [id] of this.instances) {
       this.kill(id)
     }

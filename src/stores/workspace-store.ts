@@ -33,7 +33,8 @@ class WorkspaceStore {
       id: uuidv4(),
       name,
       folderPath,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      claudeSessionId: uuidv4()
     }
 
     this.state = {
@@ -90,6 +91,19 @@ class WorkspaceStore {
       ...this.state,
       workspaces: this.state.workspaces.map(w =>
         w.id === id ? { ...w, role: role.trim() || undefined } : w
+      )
+    }
+
+    this.notify()
+    this.save()
+  }
+
+  // Update Claude session ID (used when session ID conflict is detected)
+  updateClaudeSessionId(id: string, newSessionId: string): void {
+    this.state = {
+      ...this.state,
+      workspaces: this.state.workspaces.map(w =>
+        w.id === id ? { ...w, claudeSessionId: newSessionId } : w
       )
     }
 
@@ -304,12 +318,25 @@ class WorkspaceStore {
     if (data) {
       try {
         const parsed = JSON.parse(data)
+        const originalWorkspaces = parsed.workspaces || []
+        // Migration: generate claudeSessionId for workspaces that don't have one
+        const workspaces = originalWorkspaces.map((w: Workspace) => ({
+          ...w,
+          claudeSessionId: w.claudeSessionId || uuidv4()
+        }))
         this.state = {
           ...this.state,
-          workspaces: parsed.workspaces || [],
+          workspaces,
           activeWorkspaceId: parsed.activeWorkspaceId || null
         }
         this.notify()
+        // Auto-save if migration occurred
+        const needsMigration = originalWorkspaces.some(
+          (w: Workspace) => !w.claudeSessionId
+        )
+        if (needsMigration) {
+          this.save()
+        }
       } catch (e) {
         console.error('Failed to parse workspace data:', e)
       }
