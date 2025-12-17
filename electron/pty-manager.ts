@@ -68,9 +68,8 @@ export class PtyManager {
     let args: string[] = []
 
     if (type === 'claude-code') {
-      // For Claude Code terminals, spawn cc-watch.sh script
-      const os = require('os')
-      executable = require('path').join(os.homedir(), 'Job', 'cc-watch.sh')
+      // For Claude Code terminals, use happy (https://happy.engineering/)
+      executable = 'happy'
       args = []
     } else {
       // For regular terminals, use the shell
