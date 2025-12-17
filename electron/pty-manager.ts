@@ -31,6 +31,63 @@ export class PtyManager {
     this.window = window
   }
 
+  private findHappyExecutable(): string {
+    const fs = require('fs')
+    const path = require('path')
+    const os = require('os')
+    const homeDir = os.homedir()
+
+    // Common locations where happy might be installed
+    const possiblePaths: string[] = []
+
+    if (process.platform === 'win32') {
+      // Windows locations
+      possiblePaths.push(
+        path.join(homeDir, 'AppData', 'Roaming', 'npm', 'happy.cmd'),
+        path.join(homeDir, 'AppData', 'Roaming', 'npm', 'happy'),
+        'C:\\Program Files\\nodejs\\happy.cmd'
+      )
+    } else {
+      // macOS/Linux locations
+      // Check nvm installations
+      const nvmDir = process.env.NVM_DIR || path.join(homeDir, '.nvm')
+      if (fs.existsSync(nvmDir)) {
+        const versionsDir = path.join(nvmDir, 'versions', 'node')
+        if (fs.existsSync(versionsDir)) {
+          try {
+            const versions = fs.readdirSync(versionsDir)
+            for (const version of versions.sort().reverse()) {
+              possiblePaths.push(path.join(versionsDir, version, 'bin', 'happy'))
+            }
+          } catch (e) {
+            // Ignore errors reading directory
+          }
+        }
+      }
+
+      // Other common locations
+      possiblePaths.push(
+        '/usr/local/bin/happy',
+        '/opt/homebrew/bin/happy',
+        path.join(homeDir, '.local', 'bin', 'happy'),
+        path.join(homeDir, 'bin', 'happy'),
+        '/usr/bin/happy'
+      )
+    }
+
+    // Find the first existing path
+    for (const p of possiblePaths) {
+      if (fs.existsSync(p)) {
+        console.log('Found happy at:', p)
+        return p
+      }
+    }
+
+    // Fallback to just 'happy' and hope it's in PATH
+    console.warn('Could not find happy executable, falling back to PATH lookup')
+    return 'happy'
+  }
+
   private getDefaultShell(): string {
     if (process.platform === 'win32') {
       // Prefer PowerShell 7 (pwsh) over Windows PowerShell
@@ -61,6 +118,67 @@ export class PtyManager {
     }
   }
 
+  // Construct enhanced PATH that includes Node.js binary directories
+  // This is needed for packaged Electron apps where process.env.PATH may not include node
+  private getEnhancedPath(): string {
+    const path = require('path')
+    const fs = require('fs')
+    const os = require('os')
+    const homeDir = os.homedir()
+
+    const pathParts: string[] = []
+
+    if (process.platform === 'win32') {
+      // Windows: check common Node.js locations
+      const windowsPaths = [
+        path.join(homeDir, 'AppData', 'Roaming', 'npm'),
+        'C:\\Program Files\\nodejs',
+        'C:\\Program Files (x86)\\nodejs'
+      ]
+      for (const p of windowsPaths) {
+        if (fs.existsSync(p)) {
+          pathParts.push(p)
+        }
+      }
+    } else {
+      // macOS/Linux: check nvm installations
+      const nvmDir = process.env.NVM_DIR || path.join(homeDir, '.nvm')
+      const versionsDir = path.join(nvmDir, 'versions', 'node')
+      if (fs.existsSync(versionsDir)) {
+        try {
+          const versions = fs.readdirSync(versionsDir).sort().reverse()
+          for (const version of versions) {
+            pathParts.push(path.join(versionsDir, version, 'bin'))
+          }
+        } catch (e) {
+          // Ignore errors reading directory
+        }
+      }
+
+      // Add common system paths
+      const systemPaths = [
+        '/usr/local/bin',
+        '/opt/homebrew/bin',
+        path.join(homeDir, '.local', 'bin'),
+        path.join(homeDir, 'bin'),
+        '/usr/bin',
+        '/bin'
+      ]
+      for (const p of systemPaths) {
+        if (fs.existsSync(p)) {
+          pathParts.push(p)
+        }
+      }
+    }
+
+    // Append original PATH
+    if (process.env.PATH) {
+      pathParts.push(process.env.PATH)
+    }
+
+    return pathParts.join(process.platform === 'win32' ? ';' : ':')
+  }
+
   create(options: CreatePtyOptions): boolean {
     const { id, cwd, type, shell: shellOverride } = options
 
@@ -69,7 +187,7 @@ export class PtyManager {
 
     if (type === 'claude-code') {
       // For Claude Code terminals, use happy (https://happy.engineering/)
-      executable = 'happy'
+      executable = this.findHappyExecutable()
       args = []
     } else {
       // For regular terminals, use the shell
@@ -86,9 +204,10 @@ export class PtyManager {
 
     if (ptyAvailable && pty) {
       try {
-        // Set UTF-8 environment variables
+        // Set UTF-8 environment variables and enhanced PATH for packaged apps
         const envWithUtf8 = {
           ...process.env,
+          PATH: this.getEnhancedPath(),
           LANG: 'en_US.UTF-8',
           LC_ALL: 'en_US.UTF-8',
           PYTHONIOENCODING: 'utf-8',
@@ -146,9 +265,10 @@ export class PtyManager {
           )
         }
 
-        // Set UTF-8 environment variables
+        // Set UTF-8 environment variables and enhanced PATH for packaged apps
         const envWithUtf8 = {
           ...process.env,
+          PATH: this.getEnhancedPath(),
           LANG: 'en_US.UTF-8',
           LC_ALL: 'en_US.UTF-8',
           PYTHONIOENCODING: 'utf-8',
