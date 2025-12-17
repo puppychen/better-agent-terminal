@@ -298,11 +298,23 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
     })
     resizeObserver.observe(containerRef.current)
 
-    // Initial resize
-    setTimeout(() => {
+    // Initial resize and restore buffer
+    setTimeout(async () => {
       fitAddon.fit()
       const { cols, rows } = terminal
       window.electronAPI.pty.resize(terminalId, cols, rows)
+
+      // Restore output buffer if PTY exists (for reconnection after workspace switch)
+      const exists = await window.electronAPI.pty.exists(terminalId)
+      if (exists) {
+        const buffer = await window.electronAPI.pty.getOutputBuffer(terminalId)
+        if (buffer) {
+          console.log(`Restoring ${buffer.length} chars for terminal ${terminalId}`)
+          terminal.write(buffer)
+          // Clear buffer after restoring to avoid double-write
+          window.electronAPI.pty.clearOutputBuffer(terminalId)
+        }
+      }
     }, 100)
 
     return () => {

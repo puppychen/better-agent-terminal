@@ -9,6 +9,9 @@ const electronAPI = {
     kill: (id: string) => ipcRenderer.invoke('pty:kill', id),
     restart: (id: string, cwd: string, shell?: string) => ipcRenderer.invoke('pty:restart', id, cwd, shell),
     getCwd: (id: string) => ipcRenderer.invoke('pty:get-cwd', id),
+    exists: (id: string) => ipcRenderer.invoke('pty:exists', id) as Promise<boolean>,
+    getOutputBuffer: (id: string) => ipcRenderer.invoke('pty:get-output-buffer', id) as Promise<string | null>,
+    clearOutputBuffer: (id: string) => ipcRenderer.invoke('pty:clear-output-buffer', id),
     onOutput: (callback: (id: string, data: string) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, id: string, data: string) => callback(id, data)
       ipcRenderer.on('pty:output', handler)

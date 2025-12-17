@@ -20,6 +20,7 @@ interface PtyInstance {
   type: 'terminal' | 'claude code'
   cwd: string
   usePty: boolean
+  outputBuffer: string[] // Store output history for reconnection
 }
 
 export class PtyManager {
@@ -104,6 +105,18 @@ export class PtyManager {
         })
 
         ptyProcess.onData((data: string) => {
+          // Buffer output for reconnection (keep last 50000 chars)
+          const instance = this.instances.get(id)
+          if (instance) {
+            instance.outputBuffer.push(data)
+            // Limit buffer size
+            const totalLength = instance.outputBuffer.join('').length
+            if (totalLength > 50000) {
+              while (instance.outputBuffer.length > 1 && instance.outputBuffer.join('').length > 40000) {
+                instance.outputBuffer.shift()
+              }
+            }
+          }
           this.window.webContents.send('pty:output', id, data)
         })
 
@@ -112,9 +125,9 @@ export class PtyManager {
           this.instances.delete(id)
         })
 
-        this.instances.set(id, { process: ptyProcess, type, cwd, usePty: true })
+        this.instances.set(id, { process: ptyProcess, type, cwd, usePty: true, outputBuffer: [] })
         usedPty = true
-        console.log('Created terminal using node-pty')
+        console.log('Created terminal using node-pty, id:', id)
       } catch (e) {
         console.warn('node-pty spawn failed, falling back to child_process:', e)
         ptyAvailable = false // Don't try again
@@ -151,11 +164,35 @@ export class PtyManager {
         })
 
         childProcess.stdout?.on('data', (data: Buffer) => {
-          this.window.webContents.send('pty:output', id, data.toString())
+          const str = data.toString()
+          // Buffer output for reconnection
+          const instance = this.instances.get(id)
+          if (instance) {
+            instance.outputBuffer.push(str)
+            const totalLength = instance.outputBuffer.join('').length
+            if (totalLength > 50000) {
+              while (instance.outputBuffer.length > 1 && instance.outputBuffer.join('').length > 40000) {
+                instance.outputBuffer.shift()
+              }
+            }
+          }
+          this.window.webContents.send('pty:output', id, str)
         })
 
         childProcess.stderr?.on('data', (data: Buffer) => {
-          this.window.webContents.send('pty:output', id, data.toString())
+          const str = data.toString()
+          // Buffer output for reconnection
+          const instance = this.instances.get(id)
+          if (instance) {
+            instance.outputBuffer.push(str)
+            const totalLength = instance.outputBuffer.join('').length
+            if (totalLength > 50000) {
+              while (instance.outputBuffer.length > 1 && instance.outputBuffer.join('').length > 40000) {
+                instance.outputBuffer.shift()
+              }
+            }
+          }
+          this.window.webContents.send('pty:output', id, str)
         })
 
         childProcess.on('exit', (exitCode: number | null) => {
@@ -171,8 +208,8 @@ export class PtyManager {
         // Send initial message
         this.window.webContents.send('pty:output', id, `[Terminal - child_process mode]\r\n`)
 
-        this.instances.set(id, { process: childProcess, type, cwd, usePty: false })
-        console.log('Created terminal using child_process fallback')
+        this.instances.set(id, { process: childProcess, type, cwd, usePty: false, outputBuffer: [] })
+        console.log('Created terminal using child_process fallback, id:', id)
       } catch (error) {
         console.error('Failed to create terminal:', error)
         return false
@@ -232,6 +269,28 @@ export class PtyManager {
       return instance.cwd
     }
     return null
+  }
+
+  // Check if a PTY instance exists
+  exists(id: string): boolean {
+    return this.instances.has(id)
+  }
+
+  // Get buffered output for reconnection
+  getOutputBuffer(id: string): string | null {
+    const instance = this.instances.get(id)
+    if (instance) {
+      return instance.outputBuffer.join('')
+    }
+    return null
+  }
+
+  // Clear output buffer (after it's been restored)
+  clearOutputBuffer(id: string): void {
+    const instance = this.instances.get(id)
+    if (instance) {
+      instance.outputBuffer = []
+    }
   }
 
   dispose(): void {

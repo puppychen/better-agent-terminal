@@ -37,10 +37,26 @@ body {
 /* Sidebar */
 .sidebar {
   width: 200px;
+  min-width: 150px;
+  max-width: 400px;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
+}
+
+/* Sidebar Resizer */
+.sidebar-resizer {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.2s ease;
+  flex-shrink: 0;
+}
+
+.sidebar-resizer:hover {
+  background: var(--accent-color);
 }
 
 .sidebar-header {
@@ -250,6 +266,24 @@ body {
 .workspace-item.active {
   background: var(--accent-color);
   color: white;
+}
+
+/* Workspace Drag and Drop */
+.workspace-item.dragging {
+  opacity: 0.5;
+}
+
+.workspace-item.drag-over {
+  border-top: 2px solid var(--accent-color);
+  margin-top: -2px;
+}
+
+.workspace-item[draggable="true"] {
+  cursor: grab;
+}
+
+.workspace-item[draggable="true"]:active {
+  cursor: grabbing;
 }
 
 .workspace-item .remove-btn {

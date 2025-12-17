@@ -97,6 +97,22 @@ class WorkspaceStore {
     this.save()
   }
 
+  reorderWorkspaces(fromIndex: number, toIndex: number): void {
+    if (fromIndex === toIndex) return
+
+    const workspaces = [...this.state.workspaces]
+    const [removed] = workspaces.splice(fromIndex, 1)
+    workspaces.splice(toIndex, 0, removed)
+
+    this.state = {
+      ...this.state,
+      workspaces
+    }
+
+    this.notify()
+    this.save()
+  }
+
   // Terminal actions
   addTerminal(workspaceId: string, type: 'terminal' | 'claude-code'): TerminalInstance {
     const workspace = this.state.workspaces.find(w => w.id === workspaceId)

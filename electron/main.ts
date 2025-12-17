@@ -1,11 +1,18 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, powerSaveBlocker } from 'electron'
 import path from 'path'
 import { PtyManager } from './pty-manager'
 
 let mainWindow: BrowserWindow | null = null
 let ptyManager: PtyManager | null = null
+let powerSaveBlockerId: number | null = null
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
+
+// Prevent App Nap on macOS - must be set before app is ready
+if (process.platform === 'darwin') {
+  app.commandLine.appendSwitch('disable-renderer-backgrounding')
+  app.commandLine.appendSwitch('disable-background-timer-throttling')
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -16,12 +23,19 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      backgroundThrottling: false  // Prevent throttling when app is in background
     },
     frame: true,
     titleBarStyle: 'default',
     title: 'Better Agent Terminal'
   })
+
+  // Start power save blocker to prevent system from suspending PTY processes
+  if (powerSaveBlockerId === null) {
+    powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+    console.log('Power save blocker started:', powerSaveBlockerId)
+  }
 
   ptyManager = new PtyManager(mainWindow)
 
@@ -36,6 +50,11 @@ function createWindow() {
     mainWindow = null
     ptyManager?.dispose()
     ptyManager = null
+    // Stop power save blocker
+    if (powerSaveBlockerId !== null) {
+      powerSaveBlocker.stop(powerSaveBlockerId)
+      powerSaveBlockerId = null
+    }
   })
 }
 
@@ -76,6 +95,18 @@ ipcMain.handle('pty:restart', async (_event, id: string, cwd: string, shell?: st
 
 ipcMain.handle('pty:get-cwd', async (_event, id: string) => {
   return ptyManager?.getCwd(id)
+})
+
+ipcMain.handle('pty:exists', async (_event, id: string) => {
+  return ptyManager?.exists(id) ?? false
+})
+
+ipcMain.handle('pty:get-output-buffer', async (_event, id: string) => {
+  return ptyManager?.getOutputBuffer(id)
+})
+
+ipcMain.handle('pty:clear-output-buffer', async (_event, id: string) => {
+  ptyManager?.clearOutputBuffer(id)
 })
 
 ipcMain.handle('dialog:select-folder', async () => {
