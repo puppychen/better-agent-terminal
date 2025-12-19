@@ -39,6 +39,37 @@ export class PtyManager {
     }
   }
 
+  // Get environment variables from user's shell profile
+  // This is needed because Electron launched from Dock doesn't inherit shell profile env vars
+  private getShellEnv(): Record<string, string> {
+    const { execSync } = require('child_process')
+    const os = require('os')
+
+    try {
+      const shell = process.env.SHELL || '/bin/zsh'
+      // Run shell in interactive login mode to get all env vars
+      const envOutput = execSync(`${shell} -ilc 'env'`, {
+        encoding: 'utf-8',
+        timeout: 5000,
+        env: { ...process.env, HOME: os.homedir() }
+      })
+
+      const envVars: Record<string, string> = {}
+      for (const line of envOutput.split('\n')) {
+        const eqIndex = line.indexOf('=')
+        if (eqIndex > 0) {
+          const key = line.substring(0, eqIndex)
+          const value = line.substring(eqIndex + 1)
+          envVars[key] = value
+        }
+      }
+      return envVars
+    } catch (e) {
+      console.warn('Failed to get shell environment:', e)
+      return {}
+    }
+  }
+
   private findHappyExecutable(): string {
     const fs = require('fs')
     const path = require('path')
@@ -211,11 +242,18 @@ export class PtyManager {
     // Try node-pty first, fallback to child_process if it fails
     let usedPty = false
 
+    // Get shell environment once (includes HAPPY_SERVER_URL from .zshrc, etc.)
+    const shellEnv = this.getShellEnv()
+
     if (ptyAvailable && pty) {
       try {
         // Set UTF-8 environment variables and enhanced PATH for packaged apps
+        // Merge shell env to get vars from .zshrc/.bash_profile (e.g., HAPPY_SERVER_URL)
+        const homeDir = process.env.HOME || require('os').homedir()
         const envWithUtf8 = {
+          ...shellEnv,
           ...process.env,
+          HOME: homeDir,
           PATH: this.getEnhancedPath(),
           LANG: 'en_US.UTF-8',
           LC_ALL: 'en_US.UTF-8',
@@ -275,8 +313,12 @@ export class PtyManager {
         }
 
         // Set UTF-8 environment variables and enhanced PATH for packaged apps
+        // Merge shell env to get vars from .zshrc/.bash_profile (e.g., HAPPY_SERVER_URL)
+        const homeDir = process.env.HOME || require('os').homedir()
         const envWithUtf8 = {
+          ...shellEnv,
           ...process.env,
+          HOME: homeDir,
           PATH: this.getEnhancedPath(),
           LANG: 'en_US.UTF-8',
           LC_ALL: 'en_US.UTF-8',
