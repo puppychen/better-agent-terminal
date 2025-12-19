@@ -246,15 +246,25 @@ export function Sidebar({
                   size="small"
                 />
                 <button
-                    className="remove-btn"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onRemoveWorkspace(workspace.id)
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
+                  className="folder-btn"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    window.electronAPI.shell.openPath(workspace.folderPath)
+                  }}
+                  title="Open in Finder"
+                >
+                  📁
+                </button>
+                <button
+                  className="remove-btn"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onRemoveWorkspace(workspace.id)
+                  }}
+                >
+                  ×
+                </button>
+              </div>
               </div>
             </div>
           )

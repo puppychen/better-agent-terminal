@@ -224,6 +224,15 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
         return false
       }
 
+      // Shift+Enter for newline (same as Option+Enter in Claude Code)
+      // Send ESC + Enter sequence which Claude Code interprets as insert newline
+      if (event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && event.key === 'Enter') {
+        if (event.type === 'keydown') {
+          window.electronAPI.pty.write(terminalId, '\x1b\r')
+        }
+        return false
+      }
+
       // Ctrl+Shift+C for copy
       if (event.ctrlKey && event.shiftKey && event.key === 'C') {
         const selection = terminal.getSelection()

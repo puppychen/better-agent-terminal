@@ -201,3 +201,7 @@ ipcMain.handle('settings:get-shell-path', async (_event, shellType: string) => {
 ipcMain.handle('shell:open-external', async (_event, url: string) => {
   await shell.openExternal(url)
 })
+
+ipcMain.handle('shell:open-path', async (_event, folderPath: string) => {
+  await shell.openPath(folderPath)
+})
