@@ -325,6 +325,61 @@ body {
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* IDE Menu */
+.ide-menu-container {
+  position: relative;
+}
+
+.workspace-item .ide-btn {
+  opacity: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-size: 10px;
+  font-family: monospace;
+}
+
+.workspace-item:hover .ide-btn {
+  opacity: 0.7;
+}
+
+.workspace-item .ide-btn:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ide-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  min-width: 120px;
+  padding: 4px 0;
+}
+
+.ide-dropdown button {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.ide-dropdown button:hover {
+  background: var(--bg-hover);
+}
+
 .sidebar-footer {
   padding: 12px;
   border-top: 1px solid var(--border-color);

@@ -42,8 +42,10 @@ export function Sidebar({
   const [customRoleInput, setCustomRoleInput] = useState('')
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  const [ideMenuId, setIdeMenuId] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const roleMenuRef = useRef<HTMLDivElement>(null)
+  const ideMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (editingId && inputRef.current) {
@@ -65,6 +67,24 @@ export function Sidebar({
       return () => document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [roleMenuId])
+
+  // Close IDE menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ideMenuRef.current && !ideMenuRef.current.contains(e.target as Node)) {
+        setIdeMenuId(null)
+      }
+    }
+    if (ideMenuId) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [ideMenuId])
+
+  const handleOpenWithIde = (folderPath: string, appName: string) => {
+    window.electronAPI.shell.openWithApp(appName, folderPath)
+    setIdeMenuId(null)
+  }
 
   const handleRoleClick = (workspaceId: string, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -255,6 +275,31 @@ export function Sidebar({
                 >
                   📁
                 </button>
+                <div className="ide-menu-container" ref={ideMenuId === workspace.id ? ideMenuRef : null}>
+                  <button
+                    className="ide-btn"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setIdeMenuId(ideMenuId === workspace.id ? null : workspace.id)
+                    }}
+                    title="Open in IDE"
+                  >
+                    {"</>"}
+                  </button>
+                  {ideMenuId === workspace.id && (
+                    <div className="ide-dropdown" onClick={(e) => e.stopPropagation()}>
+                      <button onClick={() => handleOpenWithIde(workspace.folderPath, 'WebStorm')}>
+                        WebStorm
+                      </button>
+                      <button onClick={() => handleOpenWithIde(workspace.folderPath, 'PhpStorm')}>
+                        PhpStorm
+                      </button>
+                      <button onClick={() => handleOpenWithIde(workspace.folderPath, 'Visual Studio Code')}>
+                        VS Code
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <button
                   className="remove-btn"
                   onClick={(e) => {

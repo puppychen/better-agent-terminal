@@ -221,3 +221,22 @@ ipcMain.handle('shell:open-external', async (_event, url: string) => {
 ipcMain.handle('shell:open-path', async (_event, folderPath: string) => {
   await shell.openPath(folderPath)
 })
+
+ipcMain.handle('shell:open-with-app', async (_event, appName: string, folderPath: string) => {
+  const { exec } = await import('child_process')
+  if (process.platform === 'darwin') {
+    // macOS: use open -a "AppName" /path
+    exec(`open -a "${appName}" "${folderPath}"`)
+  } else if (process.platform === 'win32') {
+    // Windows: VS Code uses 'code', JetBrains IDEs use their launcher scripts
+    if (appName === 'Visual Studio Code') {
+      exec(`code "${folderPath}"`)
+    } else {
+      // JetBrains IDEs - try to find in common locations
+      exec(`"${appName}" "${folderPath}"`)
+    }
+  } else {
+    // Linux: similar to Windows approach
+    exec(`${appName.toLowerCase().replace(/ /g, '')} "${folderPath}"`)
+  }
+})
