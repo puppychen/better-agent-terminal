@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CreatePtyOptions } from '../src/types'
+import type { CreatePtyOptions, CodeAgentType } from '../src/types'
 
 const electronAPI = {
   pty: {
@@ -7,7 +7,7 @@ const electronAPI = {
     write: (id: string, data: string) => ipcRenderer.invoke('pty:write', id, data),
     resize: (id: string, cols: number, rows: number) => ipcRenderer.invoke('pty:resize', id, cols, rows),
     kill: (id: string) => ipcRenderer.invoke('pty:kill', id),
-    restart: (id: string, cwd: string, shell?: string) => ipcRenderer.invoke('pty:restart', id, cwd, shell),
+    restart: (id: string, cwd: string, shell?: string, codeAgentType?: CodeAgentType) => ipcRenderer.invoke('pty:restart', id, cwd, shell, codeAgentType),
     getCwd: (id: string) => ipcRenderer.invoke('pty:get-cwd', id),
     exists: (id: string) => ipcRenderer.invoke('pty:exists', id) as Promise<boolean>,
     getOutputBuffer: (id: string) => ipcRenderer.invoke('pty:get-output-buffer', id) as Promise<string | null>,
@@ -38,6 +38,13 @@ const electronAPI = {
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
     openPath: (path: string) => ipcRenderer.invoke('shell:open-path', path)
+  },
+  window: {
+    onVisibilityChanged: (callback: (visible: boolean) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, visible: boolean) => callback(visible)
+      ipcRenderer.on('window-visibility-changed', handler)
+      return () => ipcRenderer.removeListener('window-visibility-changed', handler)
+    }
   }
 }
 

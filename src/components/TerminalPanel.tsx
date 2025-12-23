@@ -22,6 +22,8 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const isActiveRef = useRef(isActive)
+  const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const hasNewOutputWhileHiddenRef = useRef(false)
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
 
   // Keep isActiveRef in sync with isActive prop (fixes closure issue in ResizeObserver)
@@ -88,10 +90,35 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
       // Small delay to ensure DOM is updated
       const timeoutId = setTimeout(() => {
         if (fitAddonRef.current && terminalRef.current) {
+          const terminal = terminalRef.current
+
+          // 1. Adjust size
           fitAddonRef.current.fit()
-          const { cols, rows } = terminalRef.current
+          const { cols, rows } = terminal
           window.electronAPI.pty.resize(terminalId, cols, rows)
-          terminalRef.current.focus()
+
+          // 2. Force refresh entire buffer (including scrollback history)
+          // This ensures all content written while terminal was hidden gets rendered
+          const totalRows = terminal.buffer.active.length
+          terminal.refresh(0, totalRows - 1)
+
+          // 3. Scroll to bottom and focus
+          terminal.scrollToBottom()
+          terminal.focus()
+
+          // 4. If there was new output while hidden, do additional refresh after a short delay
+          // to ensure xterm.js has fully processed the content
+          if (hasNewOutputWhileHiddenRef.current) {
+            hasNewOutputWhileHiddenRef.current = false
+            setTimeout(() => {
+              if (terminalRef.current && fitAddonRef.current) {
+                fitAddonRef.current.fit()
+                const totalRows = terminalRef.current.buffer.active.length
+                terminalRef.current.refresh(0, totalRows - 1)
+                terminalRef.current.scrollToBottom()
+              }
+            }, 50)
+          }
         }
       }, 100)
 
@@ -124,6 +151,27 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
     observer.observe(containerRef.current)
 
     return () => observer.disconnect()
+  }, [isActive, terminalId])
+
+  // Handle window visibility changes (e.g., macOS workspace switching)
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.window?.onVisibilityChanged?.((visible) => {
+      // When window becomes visible again, just fit and refresh (no serialize/deserialize)
+      if (visible && isActive && terminalRef.current && fitAddonRef.current) {
+        requestAnimationFrame(() => {
+          fitAddonRef.current?.fit()
+          const { cols, rows } = terminalRef.current!
+          window.electronAPI.pty.resize(terminalId, cols, rows)
+
+          // Refresh entire buffer to ensure content is displayed correctly
+          const totalRows = terminalRef.current!.buffer.active.length
+          terminalRef.current!.refresh(0, totalRows - 1)
+          terminalRef.current!.scrollToBottom()
+        })
+      }
+    })
+
+    return () => unsubscribe?.()
   }, [isActive, terminalId])
 
   useEffect(() => {
@@ -179,31 +227,9 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
       fitAddon.fit()
     })
 
-    // Fix IME textarea position - force it to bottom left
-    const fixImePosition = () => {
-      const textarea = containerRef.current?.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement
-      if (textarea) {
-        textarea.style.position = 'fixed'
-        textarea.style.bottom = '80px'
-        textarea.style.left = '220px'
-        textarea.style.top = 'auto'
-        textarea.style.width = '1px'
-        textarea.style.height = '20px'
-        textarea.style.opacity = '0'
-        textarea.style.zIndex = '10'
-      }
-    }
-
-    // Use MutationObserver to keep fixing position when xterm.js changes it
-    const observer = new MutationObserver(() => {
-      fixImePosition()
-    })
-
-    const textarea = containerRef.current?.querySelector('.xterm-helper-textarea')
-    if (textarea) {
-      observer.observe(textarea, { attributes: true, attributeFilter: ['style'] })
-      fixImePosition()
-    }
+    // Note: IME textarea position is now handled purely by CSS in main.css
+    // Using CSS !important ensures the position is fixed without JavaScript intervention
+    // This prevents MutationObserver from repeatedly triggering and causing scroll issues
 
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
@@ -286,6 +312,10 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
         terminal.write(data)
         // Update activity time when there's output
         workspaceStore.updateTerminalActivity(terminalId)
+        // Track if there's new output while terminal is hidden
+        if (!isActiveRef.current) {
+          hasNewOutputWhileHiddenRef.current = true
+        }
       }
     })
 
@@ -296,13 +326,22 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
       }
     })
 
-    // Handle resize
+    // Handle resize with debouncing to avoid excessive calls during window resize
     const resizeObserver = new ResizeObserver(() => {
       // Only resize if terminal is currently active (use ref to get current value)
       if (isActiveRef.current) {
-        fitAddon.fit()
-        const { cols, rows } = terminal
-        window.electronAPI.pty.resize(terminalId, cols, rows)
+        // Clear existing timeout to debounce
+        if (resizeTimeoutRef.current) {
+          clearTimeout(resizeTimeoutRef.current)
+        }
+        // Debounce resize to 100ms
+        resizeTimeoutRef.current = setTimeout(() => {
+          if (fitAddonRef.current && terminalRef.current) {
+            fitAddonRef.current.fit()
+            const { cols, rows } = terminalRef.current
+            window.electronAPI.pty.resize(terminalId, cols, rows)
+          }
+        }, 100)
       }
     })
     resizeObserver.observe(containerRef.current)
@@ -320,8 +359,6 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
         if (buffer) {
           console.log(`Restoring ${buffer.length} chars for terminal ${terminalId}`)
           terminal.write(buffer)
-          // Clear buffer after restoring to avoid double-write
-          window.electronAPI.pty.clearOutputBuffer(terminalId)
         }
       }
     }, 100)
@@ -330,7 +367,10 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
       unsubscribeOutput()
       unsubscribeExit()
       resizeObserver.disconnect()
-      observer.disconnect()
+      // Clear any pending resize timeout
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current)
+      }
       terminal.dispose()
     }
   }, [terminalId])

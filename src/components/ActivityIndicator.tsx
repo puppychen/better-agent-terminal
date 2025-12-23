@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { workspaceStore } from '../stores/workspace-store'
 
 interface ActivityIndicatorProps {
@@ -8,6 +8,11 @@ interface ActivityIndicatorProps {
   size?: 'small' | 'medium'
 }
 
+// Activity timeout in milliseconds (10 seconds)
+const ACTIVITY_TIMEOUT = 10000
+// Interval for checking inactive state (5 seconds - less frequent than before)
+const INACTIVE_CHECK_INTERVAL = 5000
+
 export function ActivityIndicator({
   lastActivityTime: propActivityTime,
   workspaceId,
@@ -15,35 +20,69 @@ export function ActivityIndicator({
   size = 'small'
 }: ActivityIndicatorProps) {
   const [isActive, setIsActive] = useState(false)
+  const lastActivityTimeRef = useRef<number | null>(null)
 
-  useEffect(() => {
-    const checkActivity = () => {
-      let lastActivityTime: number | null = propActivityTime ?? null
+  // Function to get the current activity time
+  const getActivityTime = useCallback((): number | null => {
+    if (propActivityTime !== undefined) return propActivityTime
 
-      if (terminalId) {
-        const terminal = workspaceStore.getState().terminals.find(t => t.id === terminalId)
-        lastActivityTime = terminal?.lastActivityTime ?? null
-      } else if (workspaceId) {
-        lastActivityTime = workspaceStore.getWorkspaceLastActivity(workspaceId)
-      }
-
-      if (!lastActivityTime) {
-        setIsActive(false)
-        return
-      }
-
-      const timeSinceActivity = Date.now() - lastActivityTime
-      // Active (yellow) if activity within last 10 seconds
-      setIsActive(timeSinceActivity <= 10000)
+    if (terminalId) {
+      const terminal = workspaceStore.getState().terminals.find(t => t.id === terminalId)
+      return terminal?.lastActivityTime ?? null
     }
 
+    if (workspaceId) {
+      return workspaceStore.getWorkspaceLastActivity(workspaceId)
+    }
+
+    return null
+  }, [propActivityTime, workspaceId, terminalId])
+
+  // Function to check and update activity state
+  const checkActivity = useCallback(() => {
+    const activityTime = getActivityTime()
+    lastActivityTimeRef.current = activityTime
+
+    if (!activityTime) {
+      setIsActive(prev => prev ? false : prev)
+      return
+    }
+
+    const timeSinceActivity = Date.now() - activityTime
+    const shouldBeActive = timeSinceActivity <= ACTIVITY_TIMEOUT
+    setIsActive(prev => prev !== shouldBeActive ? shouldBeActive : prev)
+  }, [getActivityTime])
+
+  useEffect(() => {
+    // Initial check
     checkActivity()
 
-    // Check every 1 second
-    const interval = setInterval(checkActivity, 1000)
+    // Subscribe to store changes for immediate activity updates
+    const unsubscribe = workspaceStore.subscribe(() => {
+      const newActivityTime = getActivityTime()
+      // Only check if activity time has changed (new activity detected)
+      if (newActivityTime !== lastActivityTimeRef.current) {
+        checkActivity()
+      }
+    })
 
-    return () => clearInterval(interval)
-  }, [propActivityTime, workspaceId, terminalId])
+    // Less frequent interval to check for "becoming inactive" (from active to inactive)
+    // This is needed because the store doesn't notify when time passes
+    const interval = setInterval(() => {
+      // Only check if currently active (to detect transition to inactive)
+      if (lastActivityTimeRef.current) {
+        const timeSinceActivity = Date.now() - lastActivityTimeRef.current
+        if (timeSinceActivity > ACTIVITY_TIMEOUT) {
+          setIsActive(false)
+        }
+      }
+    }, INACTIVE_CHECK_INTERVAL)
+
+    return () => {
+      unsubscribe()
+      clearInterval(interval)
+    }
+  }, [checkActivity, getActivityTime])
 
   const className = `activity-indicator ${size} ${isActive ? 'active' : 'inactive'}`
 

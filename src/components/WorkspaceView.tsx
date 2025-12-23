@@ -1,10 +1,11 @@
 import { useEffect, useCallback, useState, useRef } from 'react'
-import type { Workspace, TerminalInstance } from '../types'
+import type { Workspace, TerminalInstance, CodeAgentType } from '../types'
 import { workspaceStore } from '../stores/workspace-store'
 import { settingsStore } from '../stores/settings-store'
 import { TerminalPanel } from './TerminalPanel'
 import { ThumbnailBar } from './ThumbnailBar'
 import { CloseConfirmDialog } from './CloseConfirmDialog'
+import { CodeAgentSelectDialog } from './CodeAgentSelectDialog'
 import { ActivityIndicator } from './ActivityIndicator'
 
 interface WorkspaceViewProps {
@@ -24,6 +25,7 @@ async function getShellFromSettings(): Promise<string | undefined> {
 
 export function WorkspaceView({ workspace, terminals, focusedTerminalId }: WorkspaceViewProps) {
   const [showCloseConfirm, setShowCloseConfirm] = useState<string | null>(null)
+  const [showAgentSelect, setShowAgentSelect] = useState(false)
   // Track workspaceId to allow creating Claude Code for different workspaces
   const creatingClaudeCodeRef = useRef<string | null>(null)
 
@@ -33,26 +35,29 @@ export function WorkspaceView({ workspace, terminals, focusedTerminalId }: Works
   const focusedTerminal = terminals.find(t => t.id === focusedTerminalId)
   const isClaudeCodeFocused = focusedTerminal?.type === 'claude-code'
 
-  // Initialize Claude Code terminal when workspace loads
-  // Using ref to track which workspace we're creating for, allowing different workspaces to create their own
+  // Show agent selection dialog when workspace loads (no Claude Code terminal exists)
+  // Using ref to track which workspace we're showing dialog for
   useEffect(() => {
     if (!claudeCode && creatingClaudeCodeRef.current !== workspace.id) {
       creatingClaudeCodeRef.current = workspace.id
-      const createClaudeCode = async () => {
-        const terminal = workspaceStore.addTerminal(workspace.id, 'claude-code')
-        const shell = await getShellFromSettings()
-
-        // Always create a new session (don't restore old session to avoid "already in use" conflicts)
-        window.electronAPI.pty.create({
-          id: terminal.id,
-          cwd: workspace.folderPath,
-          type: 'claude-code',
-          shell
-        })
-      }
-      createClaudeCode()
+      setShowAgentSelect(true)
     }
   }, [workspace.id, claudeCode])
+
+  // Handle agent selection and create Claude Code terminal
+  const handleAgentSelect = useCallback(async (agentType: CodeAgentType) => {
+    setShowAgentSelect(false)
+    const terminal = workspaceStore.addTerminal(workspace.id, 'claude-code', agentType)
+    const shell = await getShellFromSettings()
+
+    window.electronAPI.pty.create({
+      id: terminal.id,
+      cwd: workspace.folderPath,
+      type: 'claude-code',
+      shell,
+      codeAgentType: agentType
+    })
+  }, [workspace.id, workspace.folderPath])
 
   // Auto-create first terminal if none exists
   useEffect(() => {
@@ -112,7 +117,8 @@ export function WorkspaceView({ workspace, terminals, focusedTerminalId }: Works
     if (terminal) {
       const cwd = await window.electronAPI.pty.getCwd(id) || terminal.cwd
       const shell = await getShellFromSettings()
-      await window.electronAPI.pty.restart(id, cwd, shell)
+      // Pass codeAgentType for claude-code terminals to reuse the previous selection
+      await window.electronAPI.pty.restart(id, cwd, shell, terminal.codeAgentType)
       workspaceStore.updateTerminalCwd(id, cwd)
     }
   }, [terminals])
@@ -187,6 +193,10 @@ export function WorkspaceView({ workspace, terminals, focusedTerminalId }: Works
           onConfirm={handleConfirmClose}
           onCancel={() => setShowCloseConfirm(null)}
         />
+      )}
+
+      {showAgentSelect && (
+        <CodeAgentSelectDialog onSelect={handleAgentSelect} />
       )}
     </div>
   )

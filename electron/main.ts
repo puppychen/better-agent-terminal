@@ -31,13 +31,20 @@ function createWindow() {
     title: 'Better Agent Terminal'
   })
 
-  // Start power save blocker to prevent system from suspending PTY processes
-  if (powerSaveBlockerId === null) {
-    powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension')
-    console.log('Power save blocker started:', powerSaveBlockerId)
+  // Power save blocker is managed dynamically based on active terminal count
+  const updatePowerSaveBlocker = (terminalCount: number) => {
+    const hasActiveTerminals = terminalCount > 0
+    if (hasActiveTerminals && powerSaveBlockerId === null) {
+      powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+      console.log('Power save blocker started (active terminals):', powerSaveBlockerId)
+    } else if (!hasActiveTerminals && powerSaveBlockerId !== null) {
+      powerSaveBlocker.stop(powerSaveBlockerId)
+      console.log('Power save blocker stopped (no active terminals)')
+      powerSaveBlockerId = null
+    }
   }
 
-  ptyManager = new PtyManager(mainWindow)
+  ptyManager = new PtyManager(mainWindow, updatePowerSaveBlocker)
 
   if (VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(VITE_DEV_SERVER_URL)
@@ -59,6 +66,15 @@ function createWindow() {
       powerSaveBlocker.stop(powerSaveBlockerId)
       powerSaveBlockerId = null
     }
+  })
+
+  // Handle window visibility changes (e.g., macOS workspace switching)
+  mainWindow.on('show', () => {
+    mainWindow?.webContents.send('window-visibility-changed', true)
+  })
+
+  mainWindow.on('focus', () => {
+    mainWindow?.webContents.send('window-visibility-changed', true)
   })
 }
 
@@ -93,8 +109,8 @@ ipcMain.handle('pty:kill', async (_event, id: string) => {
   return ptyManager?.kill(id)
 })
 
-ipcMain.handle('pty:restart', async (_event, id: string, cwd: string, shell?: string) => {
-  return ptyManager?.restart(id, cwd, shell)
+ipcMain.handle('pty:restart', async (_event, id: string, cwd: string, shell?: string, codeAgentType?: 'happy' | 'claude') => {
+  return ptyManager?.restart(id, cwd, shell, codeAgentType)
 })
 
 ipcMain.handle('pty:get-cwd', async (_event, id: string) => {

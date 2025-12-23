@@ -17,19 +17,27 @@ try {
 
 interface PtyInstance {
   process: any // IPty or ChildProcess
-  type: 'terminal' | 'claude code'
+  type: 'terminal' | 'claude-code'
   cwd: string
   usePty: boolean
   outputBuffer: string[] // Store output history for reconnection
+  outputBufferSize: number // Track buffer size to avoid expensive join() calculations
 }
 
 export class PtyManager {
   private instances: Map<string, PtyInstance> = new Map()
   private window: BrowserWindow
   private disposed = false
+  private onTerminalCountChange?: (count: number) => void
 
-  constructor(window: BrowserWindow) {
+  constructor(window: BrowserWindow, onTerminalCountChange?: (count: number) => void) {
     this.window = window
+    this.onTerminalCountChange = onTerminalCountChange
+  }
+
+  // Notify about terminal count changes for power management
+  private notifyTerminalCountChange(): void {
+    this.onTerminalCountChange?.(this.instances.size)
   }
 
   // Safe IPC send - checks if window is still valid before sending
@@ -127,6 +135,63 @@ export class PtyManager {
     return 'happy'
   }
 
+  private findClaudeExecutable(): string {
+    const fs = require('fs')
+    const path = require('path')
+    const os = require('os')
+    const homeDir = os.homedir()
+
+    // Common locations where claude might be installed
+    const possiblePaths: string[] = []
+
+    if (process.platform === 'win32') {
+      // Windows locations
+      possiblePaths.push(
+        path.join(homeDir, 'AppData', 'Roaming', 'npm', 'claude.cmd'),
+        path.join(homeDir, 'AppData', 'Roaming', 'npm', 'claude'),
+        'C:\\Program Files\\nodejs\\claude.cmd'
+      )
+    } else {
+      // macOS/Linux locations
+      // Check nvm installations
+      const nvmDir = process.env.NVM_DIR || path.join(homeDir, '.nvm')
+      if (fs.existsSync(nvmDir)) {
+        const versionsDir = path.join(nvmDir, 'versions', 'node')
+        if (fs.existsSync(versionsDir)) {
+          try {
+            const versions = fs.readdirSync(versionsDir)
+            for (const version of versions.sort().reverse()) {
+              possiblePaths.push(path.join(versionsDir, version, 'bin', 'claude'))
+            }
+          } catch (e) {
+            // Ignore errors reading directory
+          }
+        }
+      }
+
+      // Other common locations
+      possiblePaths.push(
+        '/usr/local/bin/claude',
+        '/opt/homebrew/bin/claude',
+        path.join(homeDir, '.local', 'bin', 'claude'),
+        path.join(homeDir, 'bin', 'claude'),
+        '/usr/bin/claude'
+      )
+    }
+
+    // Find the first existing path
+    for (const p of possiblePaths) {
+      if (fs.existsSync(p)) {
+        console.log('Found claude at:', p)
+        return p
+      }
+    }
+
+    // Fallback to just 'claude' and hope it's in PATH
+    console.warn('Could not find claude executable, falling back to PATH lookup')
+    return 'claude'
+  }
+
   private getDefaultShell(): string {
     if (process.platform === 'win32') {
       // Prefer PowerShell 7 (pwsh) over Windows PowerShell
@@ -219,16 +284,20 @@ export class PtyManager {
   }
 
   create(options: CreatePtyOptions): boolean {
-    const { id, cwd, type, shell: shellOverride, sessionId } = options
+    const { id, cwd, type, shell: shellOverride, codeAgentType } = options
 
     let executable: string
     let args: string[] = []
 
     if (type === 'claude-code') {
-      // For Claude Code terminals, use happy (https://happy.engineering/)
-      executable = this.findHappyExecutable()
-      // Pass session-id to resume previous conversation
-      args = sessionId ? ['--session-id', sessionId] : []
+      // For Claude Code terminals, use happy or claude based on user selection
+      if (codeAgentType === 'claude') {
+        executable = this.findClaudeExecutable()
+      } else {
+        // Default to happy
+        executable = this.findHappyExecutable()
+      }
+      args = []
     } else {
       // For regular terminals, use the shell
       executable = shellOverride || this.getDefaultShell()
@@ -270,15 +339,16 @@ export class PtyManager {
         })
 
         ptyProcess.onData((data: string) => {
-          // Buffer output for reconnection (keep last 50000 chars)
+          // Buffer output for reconnection (keep last 200000 chars / 200KB per terminal)
           const instance = this.instances.get(id)
           if (instance) {
             instance.outputBuffer.push(data)
-            // Limit buffer size
-            const totalLength = instance.outputBuffer.join('').length
-            if (totalLength > 50000) {
-              while (instance.outputBuffer.length > 1 && instance.outputBuffer.join('').length > 40000) {
-                instance.outputBuffer.shift()
+            instance.outputBufferSize += data.length
+            // Limit buffer size using tracked size (avoids expensive join())
+            if (instance.outputBufferSize > 200000) {
+              while (instance.outputBuffer.length > 1 && instance.outputBufferSize > 160000) {
+                const removed = instance.outputBuffer.shift()!
+                instance.outputBufferSize -= removed.length
               }
             }
           }
@@ -288,11 +358,13 @@ export class PtyManager {
         ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
           this.safeSend('pty:exit', id, exitCode)
           this.instances.delete(id)
+          this.notifyTerminalCountChange()
         })
 
-        this.instances.set(id, { process: ptyProcess, type, cwd, usePty: true, outputBuffer: [] })
+        this.instances.set(id, { process: ptyProcess, type, cwd, usePty: true, outputBuffer: [], outputBufferSize: 0 })
         usedPty = true
         console.log('Created terminal using node-pty, id:', id)
+        this.notifyTerminalCountChange()
       } catch (e) {
         console.warn('node-pty spawn failed, falling back to child_process:', e)
         ptyAvailable = false // Don't try again
@@ -335,14 +407,16 @@ export class PtyManager {
 
         childProcess.stdout?.on('data', (data: Buffer) => {
           const str = data.toString()
-          // Buffer output for reconnection
+          // Buffer output for reconnection (keep last 200KB per terminal)
           const instance = this.instances.get(id)
           if (instance) {
             instance.outputBuffer.push(str)
-            const totalLength = instance.outputBuffer.join('').length
-            if (totalLength > 50000) {
-              while (instance.outputBuffer.length > 1 && instance.outputBuffer.join('').length > 40000) {
-                instance.outputBuffer.shift()
+            instance.outputBufferSize += str.length
+            // Limit buffer size using tracked size (avoids expensive join())
+            if (instance.outputBufferSize > 200000) {
+              while (instance.outputBuffer.length > 1 && instance.outputBufferSize > 160000) {
+                const removed = instance.outputBuffer.shift()!
+                instance.outputBufferSize -= removed.length
               }
             }
           }
@@ -351,14 +425,16 @@ export class PtyManager {
 
         childProcess.stderr?.on('data', (data: Buffer) => {
           const str = data.toString()
-          // Buffer output for reconnection
+          // Buffer output for reconnection (keep last 200KB per terminal)
           const instance = this.instances.get(id)
           if (instance) {
             instance.outputBuffer.push(str)
-            const totalLength = instance.outputBuffer.join('').length
-            if (totalLength > 50000) {
-              while (instance.outputBuffer.length > 1 && instance.outputBuffer.join('').length > 40000) {
-                instance.outputBuffer.shift()
+            instance.outputBufferSize += str.length
+            // Limit buffer size using tracked size (avoids expensive join())
+            if (instance.outputBufferSize > 200000) {
+              while (instance.outputBuffer.length > 1 && instance.outputBufferSize > 160000) {
+                const removed = instance.outputBuffer.shift()!
+                instance.outputBufferSize -= removed.length
               }
             }
           }
@@ -368,6 +444,7 @@ export class PtyManager {
         childProcess.on('exit', (exitCode: number | null) => {
           this.safeSend('pty:exit', id, exitCode ?? 0)
           this.instances.delete(id)
+          this.notifyTerminalCountChange()
         })
 
         childProcess.on('error', (error) => {
@@ -378,8 +455,9 @@ export class PtyManager {
         // Send initial message
         this.safeSend('pty:output', id, `[Terminal - child_process mode]\r\n`)
 
-        this.instances.set(id, { process: childProcess, type, cwd, usePty: false, outputBuffer: [] })
+        this.instances.set(id, { process: childProcess, type, cwd, usePty: false, outputBuffer: [], outputBufferSize: 0 })
         console.log('Created terminal using child_process fallback, id:', id)
+        this.notifyTerminalCountChange()
       } catch (error) {
         console.error('Failed to create terminal:', error)
         return false
@@ -418,17 +496,28 @@ export class PtyManager {
         (instance.process as ChildProcess).kill()
       }
       this.instances.delete(id)
+      this.notifyTerminalCountChange()
       return true
     }
     return false
   }
 
-  restart(id: string, cwd: string, shell?: string): boolean {
+  restart(id: string, cwd: string, shell?: string, codeAgentType?: 'happy' | 'claude'): boolean {
     const instance = this.instances.get(id)
     if (instance) {
       const type = instance.type
+      const savedBuffer = [...instance.outputBuffer]  // Preserve history
+      const savedBufferSize = instance.outputBufferSize  // Preserve size
       this.kill(id)
-      return this.create({ id, cwd, type, shell })
+      const created = this.create({ id, cwd, type, shell, codeAgentType })
+      if (created) {
+        const newInstance = this.instances.get(id)
+        if (newInstance) {
+          newInstance.outputBuffer = savedBuffer  // Restore history
+          newInstance.outputBufferSize = savedBufferSize  // Restore size
+        }
+      }
+      return created
     }
     return false
   }
@@ -446,11 +535,23 @@ export class PtyManager {
     return this.instances.has(id)
   }
 
+  // Filter ANSI escape codes that clear the screen
+  // These would be re-executed when restoring buffer, causing history loss
+  private filterClearScreenCodes(buffer: string): string {
+    return buffer
+      .replace(/\x1b\[2J/g, '')       // Clear entire screen
+      .replace(/\x1b\[3J/g, '')       // Clear scrollback buffer
+      .replace(/\x1b\[H/g, '')        // Move cursor to home position
+      .replace(/\x1b\[\?1049[hl]/g, '') // Alternate screen buffer switch
+      .replace(/\x1bc/g, '')          // Reset terminal
+  }
+
   // Get buffered output for reconnection
   getOutputBuffer(id: string): string | null {
     const instance = this.instances.get(id)
     if (instance) {
-      return instance.outputBuffer.join('')
+      const buffer = instance.outputBuffer.join('')
+      return this.filterClearScreenCodes(buffer)
     }
     return null
   }
@@ -460,6 +561,7 @@ export class PtyManager {
     const instance = this.instances.get(id)
     if (instance) {
       instance.outputBuffer = []
+      instance.outputBufferSize = 0
     }
   }
 

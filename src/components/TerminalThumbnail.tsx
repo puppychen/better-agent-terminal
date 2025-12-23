@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import type { TerminalInstance } from '../types'
 import { ActivityIndicator } from './ActivityIndicator'
 
 // Global preview cache - persists across component unmounts
 const previewCache = new Map<string, string>()
+
+// Event emitter for preview updates (event-driven instead of polling)
+const previewUpdateEmitter = new EventTarget()
 
 // Global listener setup - only once
 let globalListenerSetup = false
@@ -18,6 +21,8 @@ const setupGlobalListener = () => {
     const cleaned = combined.replace(/\x1b\[[0-9;]*m/g, '')
     const lines = cleaned.split('\n').slice(-8)
     previewCache.set(id, lines.join('\n'))
+    // Emit update event for the specific terminal
+    previewUpdateEmitter.dispatchEvent(new CustomEvent('preview-update', { detail: id }))
   })
 }
 
@@ -30,18 +35,39 @@ interface TerminalThumbnailProps {
 export function TerminalThumbnail({ terminal, isActive, onClick }: TerminalThumbnailProps) {
   const [preview, setPreview] = useState<string>(previewCache.get(terminal.id) || '')
   const isClaudeCode = terminal.type === 'claude-code'
+  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Debounced update function to prevent excessive re-renders
+  const updatePreview = useCallback(() => {
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current)
+    }
+    debounceTimeoutRef.current = setTimeout(() => {
+      const cached = previewCache.get(terminal.id) || ''
+      setPreview(cached)
+    }, 100)
+  }, [terminal.id])
 
   useEffect(() => {
     setupGlobalListener()
 
-    // Poll for updates from cache
-    const interval = setInterval(() => {
-      const cached = previewCache.get(terminal.id) || ''
-      setPreview(cached)
-    }, 500)
+    // Event-driven updates instead of polling
+    const handlePreviewUpdate = (e: Event) => {
+      const updatedId = (e as CustomEvent).detail
+      if (updatedId === terminal.id) {
+        updatePreview()
+      }
+    }
 
-    return () => clearInterval(interval)
-  }, [terminal.id])
+    previewUpdateEmitter.addEventListener('preview-update', handlePreviewUpdate)
+
+    return () => {
+      previewUpdateEmitter.removeEventListener('preview-update', handlePreviewUpdate)
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current)
+      }
+    }
+  }, [terminal.id, updatePreview])
 
   return (
     <div

@@ -1,5 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
-import type { Workspace, TerminalInstance, AppState } from '../types'
+import type { Workspace, TerminalInstance, AppState, CodeAgentType } from '../types'
+
+// Note: uuidv4 is still used for generating workspace and terminal IDs
 
 type Listener = () => void
 
@@ -33,8 +35,7 @@ class WorkspaceStore {
       id: uuidv4(),
       name,
       folderPath,
-      createdAt: Date.now(),
-      claudeSessionId: uuidv4()
+      createdAt: Date.now()
     }
 
     this.state = {
@@ -98,19 +99,6 @@ class WorkspaceStore {
     this.save()
   }
 
-  // Update Claude session ID (used when session ID conflict is detected)
-  updateClaudeSessionId(id: string, newSessionId: string): void {
-    this.state = {
-      ...this.state,
-      workspaces: this.state.workspaces.map(w =>
-        w.id === id ? { ...w, claudeSessionId: newSessionId } : w
-      )
-    }
-
-    this.notify()
-    this.save()
-  }
-
   reorderWorkspaces(fromIndex: number, toIndex: number): void {
     if (fromIndex === toIndex) return
 
@@ -128,7 +116,7 @@ class WorkspaceStore {
   }
 
   // Terminal actions
-  addTerminal(workspaceId: string, type: 'terminal' | 'claude-code'): TerminalInstance {
+  addTerminal(workspaceId: string, type: 'terminal' | 'claude-code', codeAgentType?: CodeAgentType): TerminalInstance {
     const workspace = this.state.workspaces.find(w => w.id === workspaceId)
     if (!workspace) throw new Error('Workspace not found')
 
@@ -143,7 +131,8 @@ class WorkspaceStore {
       title: type === 'claude-code' ? 'Code Agent' : `Terminal ${existingTerminals.length + 1}`,
       cwd: workspace.folderPath,
       scrollbackBuffer: [],
-      lastActivityTime: Date.now()
+      lastActivityTime: Date.now(),
+      codeAgentType: type === 'claude-code' ? codeAgentType : undefined
     }
 
     // Only auto-focus Claude Code, keep current focus for regular terminals
@@ -318,25 +307,13 @@ class WorkspaceStore {
     if (data) {
       try {
         const parsed = JSON.parse(data)
-        const originalWorkspaces = parsed.workspaces || []
-        // Migration: generate claudeSessionId for workspaces that don't have one
-        const workspaces = originalWorkspaces.map((w: Workspace) => ({
-          ...w,
-          claudeSessionId: w.claudeSessionId || uuidv4()
-        }))
+        const workspaces = parsed.workspaces || []
         this.state = {
           ...this.state,
           workspaces,
           activeWorkspaceId: parsed.activeWorkspaceId || null
         }
         this.notify()
-        // Auto-save if migration occurred
-        const needsMigration = originalWorkspaces.some(
-          (w: Workspace) => !w.claudeSessionId
-        )
-        if (needsMigration) {
-          this.save()
-        }
       } catch (e) {
         console.error('Failed to parse workspace data:', e)
       }

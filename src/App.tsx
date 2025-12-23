@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar'
 import { WorkspaceView } from './components/WorkspaceView'
 import { SettingsPanel } from './components/SettingsPanel'
 import { AboutPanel } from './components/AboutPanel'
+import { ToastProvider } from './components/Toast'
 import type { AppState } from './types'
 
 const MIN_SIDEBAR_WIDTH = 150
@@ -20,6 +21,12 @@ export default function App() {
     return saved ? parseInt(saved, 10) : DEFAULT_SIDEBAR_WIDTH
   })
   const isResizing = useRef(false)
+  const sidebarWidthRef = useRef(sidebarWidth)
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    sidebarWidthRef.current = sidebarWidth
+  }, [sidebarWidth])
 
   useEffect(() => {
     const unsubscribe = workspaceStore.subscribe(() => {
@@ -107,7 +114,7 @@ export default function App() {
         isResizing.current = false
         document.body.style.cursor = ''
         document.body.style.userSelect = ''
-        localStorage.setItem('sidebarWidth', sidebarWidth.toString())
+        localStorage.setItem('sidebarWidth', sidebarWidthRef.current.toString())
       }
     }
 
@@ -118,7 +125,7 @@ export default function App() {
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [sidebarWidth])
+  }, [])
 
   const handleAddWorkspace = useCallback(async () => {
     const folderPath = await window.electronAPI.dialog.selectFolder()
@@ -132,6 +139,7 @@ export default function App() {
   const activeWorkspace = state.workspaces.find(w => w.id === state.activeWorkspaceId)
 
   return (
+    <ToastProvider>
     <div className="app">
       <Sidebar
         workspaces={state.workspaces}
@@ -181,5 +189,6 @@ export default function App() {
         <AboutPanel onClose={() => setShowAbout(false)} />
       )}
     </div>
+    </ToastProvider>
   )
 }
