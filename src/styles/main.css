@@ -1041,7 +1041,7 @@ body {
 /* Activity Indicator */
 .activity-indicator {
   border-radius: 2px;
-  transition: all 0.8s ease-in-out;
+  transition: background-color 0.8s ease-in-out, box-shadow 0.8s ease-in-out, opacity 0.8s ease-in-out;
   position: relative;
   overflow: hidden;
 }

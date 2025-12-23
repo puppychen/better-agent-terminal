@@ -224,19 +224,25 @@ ipcMain.handle('shell:open-path', async (_event, folderPath: string) => {
 
 ipcMain.handle('shell:open-with-app', async (_event, appName: string, folderPath: string) => {
   const { exec } = await import('child_process')
+  const handleExecError = (error: Error | null) => {
+    if (error) {
+      console.error(`Failed to open ${appName}:`, error.message)
+    }
+  }
+
   if (process.platform === 'darwin') {
     // macOS: use open -a "AppName" /path
-    exec(`open -a "${appName}" "${folderPath}"`)
+    exec(`open -a "${appName}" "${folderPath}"`, handleExecError)
   } else if (process.platform === 'win32') {
     // Windows: VS Code uses 'code', JetBrains IDEs use their launcher scripts
     if (appName === 'Visual Studio Code') {
-      exec(`code "${folderPath}"`)
+      exec(`code "${folderPath}"`, handleExecError)
     } else {
       // JetBrains IDEs - try to find in common locations
-      exec(`"${appName}" "${folderPath}"`)
+      exec(`"${appName}" "${folderPath}"`, handleExecError)
     }
   } else {
     // Linux: similar to Windows approach
-    exec(`${appName.toLowerCase().replace(/ /g, '')} "${folderPath}"`)
+    exec(`${appName.toLowerCase().replace(/ /g, '')} "${folderPath}"`, handleExecError)
   }
 })

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import type { Workspace } from '../types'
 import { PRESET_ROLES } from '../types'
 import { ActivityIndicator } from './ActivityIndicator'
@@ -46,6 +46,18 @@ export function Sidebar({
   const inputRef = useRef<HTMLInputElement>(null)
   const roleMenuRef = useRef<HTMLDivElement>(null)
   const ideMenuRef = useRef<HTMLDivElement>(null)
+  const lastDragOverTime = useRef<number>(0)
+
+  // Memoize role colors to avoid recalculating on every render
+  const roleColors = useMemo(() => {
+    const colors: Record<string, string> = {}
+    workspaces.forEach(ws => {
+      if (ws.role && !colors[ws.role]) {
+        colors[ws.role] = getRoleColor(ws.role)
+      }
+    })
+    return colors
+  }, [workspaces])
 
   useEffect(() => {
     if (editingId && inputRef.current) {
@@ -54,32 +66,24 @@ export function Sidebar({
     }
   }, [editingId])
 
-  // Close role menu when clicking outside
+  // Close menus when clicking outside (unified listener for both menus)
   useEffect(() => {
+    if (!roleMenuId && !ideMenuId) return
+
     const handleClickOutside = (e: MouseEvent) => {
-      if (roleMenuRef.current && !roleMenuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node
+      if (roleMenuId && roleMenuRef.current && !roleMenuRef.current.contains(target)) {
         setRoleMenuId(null)
         setCustomRoleInput('')
       }
-    }
-    if (roleMenuId) {
-      document.addEventListener('mousedown', handleClickOutside)
-      return () => document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [roleMenuId])
-
-  // Close IDE menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (ideMenuRef.current && !ideMenuRef.current.contains(e.target as Node)) {
+      if (ideMenuId && ideMenuRef.current && !ideMenuRef.current.contains(target)) {
         setIdeMenuId(null)
       }
     }
-    if (ideMenuId) {
-      document.addEventListener('mousedown', handleClickOutside)
-      return () => document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [ideMenuId])
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [roleMenuId, ideMenuId])
 
   const handleOpenWithIde = (folderPath: string, appName: string) => {
     window.electronAPI.shell.openWithApp(appName, folderPath)
@@ -149,6 +153,11 @@ export function Sidebar({
   const handleDragOver = (index: number, e: React.DragEvent) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
+    // Throttle state updates to reduce re-renders (50ms)
+    const now = Date.now()
+    if (now - lastDragOverTime.current < 50) return
+    lastDragOverTime.current = now
+
     if (draggedIndex !== null && draggedIndex !== index) {
       setDragOverIndex(index)
     }
@@ -206,7 +215,7 @@ export function Sidebar({
                       <span
                         className="workspace-role-badge"
                         style={{
-                          backgroundColor: getRoleColor(workspace.role),
+                          backgroundColor: workspace.role ? roleColors[workspace.role] || 'transparent' : 'transparent',
                           opacity: workspace.role ? 1 : 0.3
                         }}
                         onClick={(e) => handleRoleClick(workspace.id, e)}
