@@ -303,6 +303,9 @@ export function Sidebar({
                       <button onClick={() => handleOpenWithIde(workspace.folderPath, 'PhpStorm')}>
                         PhpStorm
                       </button>
+                      <button onClick={() => handleOpenWithIde(workspace.folderPath, 'PyCharm')}>
+                        PyCharm
+                      </button>
                       <button onClick={() => handleOpenWithIde(workspace.folderPath, 'Visual Studio Code')}>
                         VS Code
                       </button>
