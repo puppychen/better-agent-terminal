@@ -26,6 +26,7 @@ async function getShellFromSettings(): Promise<string | undefined> {
 export function WorkspaceView({ workspace, terminals, focusedTerminalId }: WorkspaceViewProps) {
   const [showCloseConfirm, setShowCloseConfirm] = useState<string | null>(null)
   const [showAgentSelect, setShowAgentSelect] = useState(false)
+  const [restartingTerminalId, setRestartingTerminalId] = useState<string | null>(null)
   // Track workspaceId to allow creating Claude Code for different workspaces
   const creatingClaudeCodeRef = useRef<string | null>(null)
 
@@ -115,13 +116,31 @@ export function WorkspaceView({ workspace, terminals, focusedTerminalId }: Works
   const handleRestart = useCallback(async (id: string) => {
     const terminal = terminals.find(t => t.id === id)
     if (terminal) {
-      const cwd = await window.electronAPI.pty.getCwd(id) || terminal.cwd
-      const shell = await getShellFromSettings()
-      // Pass codeAgentType for claude-code terminals to reuse the previous selection
-      await window.electronAPI.pty.restart(id, cwd, shell, terminal.codeAgentType)
-      workspaceStore.updateTerminalCwd(id, cwd)
+      if (terminal.type === 'claude-code') {
+        // Show agent selection dialog for claude-code terminals
+        setRestartingTerminalId(id)
+      } else {
+        // Direct restart for regular terminals
+        const cwd = await window.electronAPI.pty.getCwd(id) || terminal.cwd
+        const shell = await getShellFromSettings()
+        await window.electronAPI.pty.restart(id, cwd, shell)
+        workspaceStore.updateTerminalCwd(id, cwd)
+      }
     }
   }, [terminals])
+
+  const handleRestartAgentSelect = useCallback(async (agentType: CodeAgentType) => {
+    if (!restartingTerminalId) return
+    const terminal = terminals.find(t => t.id === restartingTerminalId)
+    if (terminal) {
+      const cwd = await window.electronAPI.pty.getCwd(restartingTerminalId) || terminal.cwd
+      const shell = await getShellFromSettings()
+      await window.electronAPI.pty.restart(restartingTerminalId, cwd, shell, agentType)
+      workspaceStore.updateTerminalCwd(restartingTerminalId, cwd)
+      workspaceStore.updateTerminalCodeAgentType(restartingTerminalId, agentType)
+    }
+    setRestartingTerminalId(null)
+  }, [restartingTerminalId, terminals])
 
   const handleFocus = useCallback((id: string) => {
     workspaceStore.setFocusedTerminal(id)
@@ -197,6 +216,10 @@ export function WorkspaceView({ workspace, terminals, focusedTerminalId }: Works
 
       {showAgentSelect && (
         <CodeAgentSelectDialog onSelect={handleAgentSelect} />
+      )}
+
+      {restartingTerminalId && (
+        <CodeAgentSelectDialog onSelect={handleRestartAgentSelect} />
       )}
     </div>
   )

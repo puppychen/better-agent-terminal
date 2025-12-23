@@ -184,6 +184,17 @@ class WorkspaceStore {
     this.notify()
   }
 
+  updateTerminalCodeAgentType(id: string, codeAgentType: CodeAgentType): void {
+    this.state = {
+      ...this.state,
+      terminals: this.state.terminals.map(t =>
+        t.id === id ? { ...t, codeAgentType } : t
+      )
+    }
+
+    this.notify()
+  }
+
   appendScrollback(id: string, data: string): void {
     this.state = {
       ...this.state,
