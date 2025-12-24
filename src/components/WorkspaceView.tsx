@@ -135,12 +135,22 @@ export function WorkspaceView({ workspace, terminals, focusedTerminalId }: Works
     if (terminal) {
       const cwd = await window.electronAPI.pty.getCwd(restartingTerminalId) || terminal.cwd
       const shell = await getShellFromSettings()
-      await window.electronAPI.pty.restart(restartingTerminalId, cwd, shell, agentType)
-      workspaceStore.updateTerminalCwd(restartingTerminalId, cwd)
-      workspaceStore.updateTerminalCodeAgentType(restartingTerminalId, agentType)
+
+      // Delete old terminal and create new one (more reliable than restart)
+      window.electronAPI.pty.kill(restartingTerminalId)
+      workspaceStore.removeTerminal(restartingTerminalId)
+
+      const newTerminal = workspaceStore.addTerminal(workspace.id, 'claude-code', agentType)
+      window.electronAPI.pty.create({
+        id: newTerminal.id,
+        cwd,
+        type: 'claude-code',
+        shell,
+        codeAgentType: agentType
+      })
     }
     setRestartingTerminalId(null)
-  }, [restartingTerminalId, terminals])
+  }, [restartingTerminalId, terminals, workspace.id])
 
   const handleFocus = useCallback((id: string) => {
     workspaceStore.setFocusedTerminal(id)
