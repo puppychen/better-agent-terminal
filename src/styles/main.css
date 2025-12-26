@@ -118,6 +118,27 @@ body {
   color: white;
 }
 
+/* Tab Activity Indicator */
+.tab-activity-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #fbbf24;
+  box-shadow: 0 0 6px rgba(251, 191, 36, 0.8);
+  animation: tab-activity-pulse 2s ease-in-out infinite;
+}
+
+@keyframes tab-activity-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(0.9);
+  }
+}
+
 .workspace-list {
   flex: 1;
   overflow-y: auto;

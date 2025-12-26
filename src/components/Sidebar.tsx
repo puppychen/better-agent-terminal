@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import type { Workspace } from '../types'
 import { PRESET_ROLES } from '../types'
 import { ActivityIndicator } from './ActivityIndicator'
+import { workspaceStore } from '../stores/workspace-store'
 
 interface SidebarProps {
   workspaces: Workspace[]
@@ -79,6 +80,43 @@ export function Sidebar({
     })
     return counts
   }, [workspaces])
+
+  // Force update for activity status check
+  const [updateCounter, forceUpdate] = useState(0)
+
+  // Subscribe to workspaceStore for immediate activity updates
+  useEffect(() => {
+    const unsubscribe = workspaceStore.subscribe(() => {
+      forceUpdate(n => n + 1)
+    })
+    return () => unsubscribe()
+  }, [])
+
+  // Check if any workspace in each tab is active
+  const ACTIVITY_TIMEOUT = 10000
+  const tabActiveStatus = useMemo(() => {
+    const status: Record<number, boolean> = { 1: false, 2: false, 3: false }
+    const now = Date.now()
+
+    workspaces.forEach(w => {
+      const tabId = w.tabId || 1
+      const lastActivity = workspaceStore.getWorkspaceLastActivity(w.id)
+      if (lastActivity && (now - lastActivity <= ACTIVITY_TIMEOUT)) {
+        status[tabId] = true
+      }
+    })
+
+    return status
+  }, [workspaces, updateCounter])
+
+  // Check for activity timeout only when there's active status
+  useEffect(() => {
+    const hasActivity = Object.values(tabActiveStatus).some(Boolean)
+    if (hasActivity) {
+      const timeout = setTimeout(() => forceUpdate(n => n + 1), ACTIVITY_TIMEOUT)
+      return () => clearTimeout(timeout)
+    }
+  }, [tabActiveStatus])
 
   useEffect(() => {
     if (editingId && inputRef.current) {
@@ -240,6 +278,7 @@ export function Sidebar({
             onDragLeave={handleTabDragLeave}
             onDrop={(e) => handleTabDrop(tabId, e)}
           >
+            {tabActiveStatus[tabId] && <span className="tab-activity-dot" />}
             Tab {tabId}
             <span className="tab-count">{tabCounts[tabId]}</span>
           </button>

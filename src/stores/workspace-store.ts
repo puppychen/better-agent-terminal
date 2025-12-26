@@ -127,7 +127,9 @@ class WorkspaceStore {
     if (fromIndex === -1 || toIndex === -1) return
 
     const [removed] = workspaces.splice(fromIndex, 1)
-    workspaces.splice(toIndex, 0, removed)
+    // When moving forward (fromIndex < toIndex), the target index shifts by -1 after removal
+    const insertIndex = fromIndex < toIndex ? toIndex - 1 : toIndex
+    workspaces.splice(insertIndex, 0, removed)
 
     this.state = {
       ...this.state,
@@ -308,23 +310,31 @@ class WorkspaceStore {
     this.setFocusedTerminal(terminals[prevIndex].id)
   }
 
-  // Workspace switching
+  // Workspace switching (within current tab only)
   switchToNextWorkspace(): void {
     const { workspaces, activeWorkspaceId } = this.state
-    if (workspaces.length <= 1) return
+    const currentWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
+    const currentTabId = currentWorkspace?.tabId || 1
 
-    const currentIndex = workspaces.findIndex(w => w.id === activeWorkspaceId)
-    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % workspaces.length
-    this.setActiveWorkspace(workspaces[nextIndex].id)
+    const tabWorkspaces = workspaces.filter(w => (w.tabId || 1) === currentTabId)
+    if (tabWorkspaces.length <= 1) return
+
+    const currentIndex = tabWorkspaces.findIndex(w => w.id === activeWorkspaceId)
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % tabWorkspaces.length
+    this.setActiveWorkspace(tabWorkspaces[nextIndex].id)
   }
 
   switchToPreviousWorkspace(): void {
     const { workspaces, activeWorkspaceId } = this.state
-    if (workspaces.length <= 1) return
+    const currentWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
+    const currentTabId = currentWorkspace?.tabId || 1
 
-    const currentIndex = workspaces.findIndex(w => w.id === activeWorkspaceId)
-    const prevIndex = currentIndex <= 0 ? workspaces.length - 1 : currentIndex - 1
-    this.setActiveWorkspace(workspaces[prevIndex].id)
+    const tabWorkspaces = workspaces.filter(w => (w.tabId || 1) === currentTabId)
+    if (tabWorkspaces.length <= 1) return
+
+    const currentIndex = tabWorkspaces.findIndex(w => w.id === activeWorkspaceId)
+    const prevIndex = currentIndex <= 0 ? tabWorkspaces.length - 1 : currentIndex - 1
+    this.setActiveWorkspace(tabWorkspaces[prevIndex].id)
   }
 
   // Persistence
