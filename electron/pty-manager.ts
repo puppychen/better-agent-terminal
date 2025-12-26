@@ -553,6 +553,23 @@ export class PtyManager {
     const instance = this.instances.get(id)
     if (instance) {
       const buffer = instance.outputBuffer.join('')
+      // CodeAgent (Claude Code) is a full-screen TUI app that relies on clear screen codes
+      // and cursor positioning to draw its UI. Instead of filtering these codes,
+      // we return only the content after the last clear screen code to restore the final UI state.
+      if (instance.type === 'claude-code') {
+        const lastClearIdx = buffer.lastIndexOf('\x1b[2J')
+        if (lastClearIdx !== -1) {
+          // Ensure cursor is at home position after clear screen
+          const content = buffer.substring(lastClearIdx)
+          // If content doesn't have cursor home right after clear screen, add it
+          if (!content.startsWith('\x1b[2J\x1b[H') && !content.startsWith('\x1b[2J\x1b[1;1H')) {
+            return '\x1b[2J\x1b[H' + content.substring(4) // Replace \x1b[2J with \x1b[2J\x1b[H
+          }
+          return content
+        }
+        return buffer // No clear screen code, return full buffer
+      }
+      // For regular terminals, filter clear screen codes to preserve history
       return this.filterClearScreenCodes(buffer)
     }
     return null

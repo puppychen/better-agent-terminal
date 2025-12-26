@@ -74,6 +74,7 @@ class WorkspaceStore {
     }
 
     this.notify()
+    this.save()
   }
 
   renameWorkspace(id: string, alias: string): void {
