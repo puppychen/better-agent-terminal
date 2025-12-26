@@ -66,10 +66,15 @@ export function ActivityIndicator({
       }
     })
 
-    // Less frequent interval to check for "becoming inactive" (from active to inactive)
-    // This is needed because the store doesn't notify when time passes
+    return () => unsubscribe()
+  }, [checkActivity, getActivityTime])
+
+  // Only run interval when active (to detect transition to inactive)
+  // This avoids CPU usage when already inactive
+  useEffect(() => {
+    if (!isActive) return
+
     const interval = setInterval(() => {
-      // Only check if currently active (to detect transition to inactive)
       if (lastActivityTimeRef.current) {
         const timeSinceActivity = Date.now() - lastActivityTimeRef.current
         if (timeSinceActivity > ACTIVITY_TIMEOUT) {
@@ -78,11 +83,8 @@ export function ActivityIndicator({
       }
     }, INACTIVE_CHECK_INTERVAL)
 
-    return () => {
-      unsubscribe()
-      clearInterval(interval)
-    }
-  }, [checkActivity, getActivityTime])
+    return () => clearInterval(interval)
+  }, [isActive])
 
   const className = `activity-indicator ${size} ${isActive ? 'active' : 'inactive'}`
 
