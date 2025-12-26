@@ -57,8 +57,8 @@ export function ActivityIndicator({
     // Initial check
     checkActivity()
 
-    // Subscribe to store changes for immediate activity updates
-    const unsubscribe = workspaceStore.subscribe(() => {
+    // Subscribe to activity updates only (not all store changes)
+    const unsubscribe = workspaceStore.subscribeToActivity(() => {
       const newActivityTime = getActivityTime()
       // Only check if activity time has changed (new activity detected)
       if (newActivityTime !== lastActivityTimeRef.current) {

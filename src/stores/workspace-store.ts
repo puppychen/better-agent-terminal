@@ -15,6 +15,7 @@ class WorkspaceStore {
   }
 
   private listeners: Set<Listener> = new Set()
+  private activityListeners: Set<Listener> = new Set()
 
   getState(): AppState {
     return this.state
@@ -25,8 +26,17 @@ class WorkspaceStore {
     return () => this.listeners.delete(listener)
   }
 
+  subscribeToActivity(listener: Listener): () => void {
+    this.activityListeners.add(listener)
+    return () => this.activityListeners.delete(listener)
+  }
+
   private notify(): void {
     this.listeners.forEach(listener => listener())
+  }
+
+  private notifyActivity(): void {
+    this.activityListeners.forEach(listener => listener())
   }
 
   // Workspace actions
@@ -269,10 +279,11 @@ class WorkspaceStore {
         t.id === id ? { ...t, lastActivityTime: now } : t
       )
     }
-    // Throttle notifications to avoid excessive re-renders (max once per 500ms)
+    // Throttle activity notifications (max once per 500ms)
+    // Only notify activity listeners, not all subscribers
     if (now - this.lastActivityNotify > 500) {
       this.lastActivityNotify = now
-      this.notify()
+      this.notifyActivity()
     }
   }
 

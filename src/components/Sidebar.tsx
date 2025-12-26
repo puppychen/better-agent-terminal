@@ -81,42 +81,73 @@ export function Sidebar({
     return counts
   }, [workspaces])
 
-  // Force update for activity status check
-  const [updateCounter, forceUpdate] = useState(0)
-
-  // Subscribe to workspaceStore for immediate activity updates
-  useEffect(() => {
-    const unsubscribe = workspaceStore.subscribe(() => {
-      forceUpdate(n => n + 1)
-    })
-    return () => unsubscribe()
-  }, [])
-
-  // Check if any workspace in each tab is active
+  // Activity timeout in milliseconds
   const ACTIVITY_TIMEOUT = 10000
-  const tabActiveStatus = useMemo(() => {
-    const status: Record<number, boolean> = { 1: false, 2: false, 3: false }
-    const now = Date.now()
 
-    workspaces.forEach(w => {
-      const tabId = w.tabId || 1
-      const lastActivity = workspaceStore.getWorkspaceLastActivity(w.id)
-      if (lastActivity && (now - lastActivity <= ACTIVITY_TIMEOUT)) {
-        status[tabId] = true
-      }
-    })
+  // Track tab activity status with dedicated state
+  const [tabActiveStatus, setTabActiveStatus] = useState<Record<number, boolean>>({ 1: false, 2: false, 3: false })
 
-    return status
-  }, [workspaces, updateCounter])
+  // Subscribe to activity updates only (not all store changes)
+  useEffect(() => {
+    const computeTabActiveStatus = () => {
+      const status: Record<number, boolean> = { 1: false, 2: false, 3: false }
+      const now = Date.now()
 
-  // Check for activity timeout only when there's active status
+      workspaces.forEach(w => {
+        const tabId = w.tabId || 1
+        const lastActivity = workspaceStore.getWorkspaceLastActivity(w.id)
+        if (lastActivity && (now - lastActivity <= ACTIVITY_TIMEOUT)) {
+          status[tabId] = true
+        }
+      })
+
+      return status
+    }
+
+    const updateStatus = () => {
+      const newStatus = computeTabActiveStatus()
+      setTabActiveStatus(prev => {
+        // Only update if status actually changed
+        if (prev[1] === newStatus[1] && prev[2] === newStatus[2] && prev[3] === newStatus[3]) {
+          return prev
+        }
+        return newStatus
+      })
+    }
+
+    // Initial check
+    updateStatus()
+
+    // Subscribe to activity updates only
+    const unsubscribe = workspaceStore.subscribeToActivity(updateStatus)
+
+    return () => unsubscribe()
+  }, [workspaces])
+
+  // Check for activity timeout to update "active -> inactive" transitions
   useEffect(() => {
     const hasActivity = Object.values(tabActiveStatus).some(Boolean)
-    if (hasActivity) {
-      const timeout = setTimeout(() => forceUpdate(n => n + 1), ACTIVITY_TIMEOUT)
-      return () => clearTimeout(timeout)
+    if (!hasActivity) return
+
+    const checkTimeout = () => {
+      const now = Date.now()
+      let hasActiveTab = false
+
+      workspaces.forEach(w => {
+        const lastActivity = workspaceStore.getWorkspaceLastActivity(w.id)
+        if (lastActivity && (now - lastActivity <= ACTIVITY_TIMEOUT)) {
+          hasActiveTab = true
+        }
+      })
+
+      if (!hasActiveTab) {
+        setTabActiveStatus({ 1: false, 2: false, 3: false })
+      }
     }
-  }, [tabActiveStatus])
+
+    const timeout = setTimeout(checkTimeout, ACTIVITY_TIMEOUT)
+    return () => clearTimeout(timeout)
+  }, [tabActiveStatus, workspaces])
 
   useEffect(() => {
     if (editingId && inputRef.current) {
