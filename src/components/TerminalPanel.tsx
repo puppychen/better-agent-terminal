@@ -105,7 +105,8 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
           const startRow = Math.max(0, totalRows - viewportRows)
           terminal.refresh(startRow, totalRows - 1)
 
-          // 3. Focus terminal (scrollOnOutput handles scroll position)
+          // 3. Scroll to bottom and focus terminal
+          terminal.scrollToBottom()
           terminal.focus()
 
           // 4. If there was new output while hidden, do additional refresh after a short delay
@@ -119,6 +120,7 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
                 const totalRows = term.buffer.active.length
                 const startRow = Math.max(0, totalRows - viewportRows)
                 term.refresh(startRow, totalRows - 1)
+                term.scrollToBottom()
               }
             }, 50)
           }
@@ -167,11 +169,12 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
           const { cols, rows } = term
           window.electronAPI.pty.resize(terminalId, cols, rows)
 
-          // Only refresh visible viewport (scrollOnOutput handles scroll position)
+          // Only refresh visible viewport and scroll to bottom
           const viewportRows = term.rows
           const totalRows = term.buffer.active.length
           const startRow = Math.max(0, totalRows - viewportRows)
           term.refresh(startRow, totalRows - 1)
+          term.scrollToBottom()
         })
       }
     })
@@ -315,6 +318,10 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
     const unsubscribeOutput = window.electronAPI.pty.onOutput((id, data) => {
       if (id === terminalId) {
         terminal.write(data)
+        // Ensure scroll to bottom for active terminal
+        if (isActiveRef.current) {
+          terminal.scrollToBottom()
+        }
         // Throttle activity updates to 1 second to reduce state updates
         const now = Date.now()
         if (now - lastActivityUpdateRef.current > 1000) {
