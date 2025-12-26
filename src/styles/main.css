@@ -66,6 +66,58 @@ body {
   border-bottom: 1px solid var(--border-color);
 }
 
+/* Sidebar Tabs */
+.sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.sidebar-tab {
+  flex: 1;
+  padding: 10px 6px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.sidebar-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sidebar-tab.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent-color);
+}
+
+.sidebar-tab.drag-over {
+  background: var(--bg-hover);
+  border-bottom-color: var(--accent-color);
+}
+
+.tab-count {
+  background: var(--bg-tertiary);
+  padding: 1px 5px;
+  border-radius: 8px;
+  font-size: 9px;
+  min-width: 16px;
+  text-align: center;
+}
+
+.sidebar-tab.active .tab-count {
+  background: var(--accent-color);
+  color: white;
+}
+
 .workspace-list {
   flex: 1;
   overflow-y: auto;

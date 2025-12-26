@@ -157,6 +157,9 @@ export default function App() {
         onSetWorkspaceRole={(id, role) => {
           workspaceStore.setWorkspaceRole(id, role)
         }}
+        onSetWorkspaceTab={(id, tabId) => {
+          workspaceStore.setWorkspaceTab(id, tabId)
+        }}
         onReorderWorkspaces={(fromIndex, toIndex) => {
           workspaceStore.reorderWorkspaces(fromIndex, toIndex)
         }}

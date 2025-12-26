@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import type { Workspace } from '../types'
 import { PRESET_ROLES } from '../types'
 import { ActivityIndicator } from './ActivityIndicator'
@@ -11,6 +11,7 @@ interface SidebarProps {
   onRemoveWorkspace: (id: string) => void
   onRenameWorkspace: (id: string, alias: string) => void
   onSetWorkspaceRole: (id: string, role: string) => void
+  onSetWorkspaceTab: (id: string, tabId: number) => void
   onReorderWorkspaces: (fromIndex: number, toIndex: number) => void
   onOpenSettings: () => void
   onOpenAbout: () => void
@@ -31,6 +32,7 @@ export function Sidebar({
   onRemoveWorkspace,
   onRenameWorkspace,
   onSetWorkspaceRole,
+  onSetWorkspaceTab,
   onReorderWorkspaces,
   onOpenSettings,
   onOpenAbout,
@@ -42,11 +44,14 @@ export function Sidebar({
   const [customRoleInput, setCustomRoleInput] = useState('')
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  const [dragOverTabId, setDragOverTabId] = useState<number | null>(null)
   const [ideMenuId, setIdeMenuId] = useState<string | null>(null)
+  const [activeTabId, setActiveTabId] = useState<number>(1)
   const inputRef = useRef<HTMLInputElement>(null)
   const roleMenuRef = useRef<HTMLDivElement>(null)
   const ideMenuRef = useRef<HTMLDivElement>(null)
   const lastDragOverTime = useRef<number>(0)
+  const draggedWorkspaceId = useRef<string | null>(null)
 
   // Memoize role colors to avoid recalculating on every render
   const roleColors = useMemo(() => {
@@ -57,6 +62,22 @@ export function Sidebar({
       }
     })
     return colors
+  }, [workspaces])
+
+  // Filter workspaces by active tab
+  const filteredWorkspaces = useMemo(() =>
+    workspaces.filter(w => (w.tabId || 1) === activeTabId),
+    [workspaces, activeTabId]
+  )
+
+  // Count workspaces per tab
+  const tabCounts = useMemo(() => {
+    const counts: Record<number, number> = { 1: 0, 2: 0, 3: 0 }
+    workspaces.forEach(w => {
+      const tabId = w.tabId || 1
+      counts[tabId] = (counts[tabId] || 0) + 1
+    })
+    return counts
   }, [workspaces])
 
   useEffect(() => {
@@ -132,10 +153,12 @@ export function Sidebar({
     }
   }
 
-  const handleDragStart = (index: number, e: React.DragEvent) => {
+  const handleDragStart = (index: number, workspace: Workspace, e: React.DragEvent) => {
     setDraggedIndex(index)
+    draggedWorkspaceId.current = workspace.id
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('text/plain', index.toString())
+    e.dataTransfer.setData('text/workspace-id', workspace.id)
     // Add a slight delay to allow the drag image to be captured
     setTimeout(() => {
       const target = e.target as HTMLElement
@@ -148,6 +171,33 @@ export function Sidebar({
     target.style.opacity = '1'
     setDraggedIndex(null)
     setDragOverIndex(null)
+    setDragOverTabId(null)
+    draggedWorkspaceId.current = null
+  }
+
+  // Tab drag handlers
+  const handleTabDragOver = (tabId: number, e: React.DragEvent) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (draggedWorkspaceId.current) {
+      setDragOverTabId(tabId)
+    }
+  }
+
+  const handleTabDragLeave = () => {
+    setDragOverTabId(null)
+  }
+
+  const handleTabDrop = (targetTabId: number, e: React.DragEvent) => {
+    e.preventDefault()
+    const workspaceId = draggedWorkspaceId.current
+    if (workspaceId) {
+      onSetWorkspaceTab(workspaceId, targetTabId)
+      setActiveTabId(targetTabId)
+    }
+    setDragOverTabId(null)
+    setDraggedIndex(null)
+    draggedWorkspaceId.current = null
   }
 
   const handleDragOver = (index: number, e: React.DragEvent) => {
@@ -178,15 +228,29 @@ export function Sidebar({
 
   return (
     <aside className="sidebar" style={width ? { width: `${width}px` } : undefined}>
-      <div className="sidebar-header">Workspaces</div>
+      <div className="sidebar-tabs">
+        {[1, 2, 3].map(tabId => (
+          <button
+            key={tabId}
+            className={`sidebar-tab ${activeTabId === tabId ? 'active' : ''} ${dragOverTabId === tabId ? 'drag-over' : ''}`}
+            onClick={() => setActiveTabId(tabId)}
+            onDragOver={(e) => handleTabDragOver(tabId, e)}
+            onDragLeave={handleTabDragLeave}
+            onDrop={(e) => handleTabDrop(tabId, e)}
+          >
+            Tab {tabId}
+            <span className="tab-count">{tabCounts[tabId]}</span>
+          </button>
+        ))}
+      </div>
       <div className="workspace-list">
-        {workspaces.map((workspace, index) => (
+        {filteredWorkspaces.map((workspace, index) => (
           <div
             key={workspace.id}
             className={`workspace-item ${workspace.id === activeWorkspaceId ? 'active' : ''} ${draggedIndex === index ? 'dragging' : ''} ${dragOverIndex === index ? 'drag-over' : ''}`}
             onClick={() => onSelectWorkspace(workspace.id)}
             draggable={editingId !== workspace.id}
-            onDragStart={(e) => handleDragStart(index, e)}
+            onDragStart={(e) => handleDragStart(index, workspace, e)}
             onDragEnd={handleDragEnd}
             onDragOver={(e) => handleDragOver(index, e)}
             onDragLeave={handleDragLeave}

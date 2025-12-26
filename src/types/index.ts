@@ -9,6 +9,7 @@ export interface Workspace {
   folderPath: string;
   createdAt: number;
   claudeSessionId?: string;
+  tabId?: number;  // 1, 2, or 3. Default to 1 if undefined
 }
 
 // Preset roles for quick selection

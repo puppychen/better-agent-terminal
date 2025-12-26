@@ -35,7 +35,8 @@ class WorkspaceStore {
       id: uuidv4(),
       name,
       folderPath,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      tabId: 1
     }
 
     this.state = {
@@ -98,6 +99,22 @@ class WorkspaceStore {
 
     this.notify()
     this.save()
+  }
+
+  setWorkspaceTab(id: string, tabId: number): void {
+    this.state = {
+      ...this.state,
+      workspaces: this.state.workspaces.map(w =>
+        w.id === id ? { ...w, tabId } : w
+      )
+    }
+
+    this.notify()
+    this.save()
+  }
+
+  getWorkspacesByTab(tabId: number): Workspace[] {
+    return this.state.workspaces.filter(w => (w.tabId || 1) === tabId)
   }
 
   reorderWorkspaces(fromIndex: number, toIndex: number): void {
