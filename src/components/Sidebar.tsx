@@ -12,7 +12,7 @@ interface SidebarProps {
   onRenameWorkspace: (id: string, alias: string) => void
   onSetWorkspaceRole: (id: string, role: string) => void
   onSetWorkspaceTab: (id: string, tabId: number) => void
-  onReorderWorkspaces: (fromIndex: number, toIndex: number) => void
+  onReorderWorkspaces: (fromId: string, toId: string) => void
   onOpenSettings: () => void
   onOpenAbout: () => void
   width?: number
@@ -217,13 +217,15 @@ export function Sidebar({
     setDragOverIndex(null)
   }
 
-  const handleDrop = (toIndex: number, e: React.DragEvent) => {
+  const handleDrop = (toWorkspaceId: string, e: React.DragEvent) => {
     e.preventDefault()
-    if (draggedIndex !== null && draggedIndex !== toIndex) {
-      onReorderWorkspaces(draggedIndex, toIndex)
+    const fromId = draggedWorkspaceId.current
+    if (fromId && fromId !== toWorkspaceId) {
+      onReorderWorkspaces(fromId, toWorkspaceId)
     }
     setDraggedIndex(null)
     setDragOverIndex(null)
+    draggedWorkspaceId.current = null
   }
 
   return (
@@ -254,7 +256,7 @@ export function Sidebar({
             onDragEnd={handleDragEnd}
             onDragOver={(e) => handleDragOver(index, e)}
             onDragLeave={handleDragLeave}
-            onDrop={(e) => handleDrop(index, e)}
+            onDrop={(e) => handleDrop(workspace.id, e)}
           >
             <div className="workspace-item-content">
               <div

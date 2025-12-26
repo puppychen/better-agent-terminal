@@ -160,8 +160,8 @@ export default function App() {
         onSetWorkspaceTab={(id, tabId) => {
           workspaceStore.setWorkspaceTab(id, tabId)
         }}
-        onReorderWorkspaces={(fromIndex, toIndex) => {
-          workspaceStore.reorderWorkspaces(fromIndex, toIndex)
+        onReorderWorkspaces={(fromId, toId) => {
+          workspaceStore.reorderWorkspaces(fromId, toId)
         }}
         onOpenSettings={() => setShowSettings(true)}
         onOpenAbout={() => setShowAbout(true)}

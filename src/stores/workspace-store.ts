@@ -117,10 +117,15 @@ class WorkspaceStore {
     return this.state.workspaces.filter(w => (w.tabId || 1) === tabId)
   }
 
-  reorderWorkspaces(fromIndex: number, toIndex: number): void {
-    if (fromIndex === toIndex) return
+  reorderWorkspaces(fromId: string, toId: string): void {
+    if (fromId === toId) return
 
     const workspaces = [...this.state.workspaces]
+    const fromIndex = workspaces.findIndex(w => w.id === fromId)
+    const toIndex = workspaces.findIndex(w => w.id === toId)
+
+    if (fromIndex === -1 || toIndex === -1) return
+
     const [removed] = workspaces.splice(fromIndex, 1)
     workspaces.splice(toIndex, 0, removed)
 
