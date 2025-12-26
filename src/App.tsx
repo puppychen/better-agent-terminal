@@ -136,6 +136,8 @@ export default function App() {
     }
   }, [])
 
+  const activeWorkspace = state.workspaces.find(w => w.id === state.activeWorkspaceId)
+
   return (
     <ToastProvider>
     <div className="app">
@@ -167,19 +169,12 @@ export default function App() {
         onMouseDown={handleResizeStart}
       />
       <main className="main-content">
-        {state.workspaces.length > 0 ? (
-          state.workspaces.map(workspace => (
-            <div
-              key={workspace.id}
-              className={`workspace-container ${workspace.id === state.activeWorkspaceId ? 'active' : 'hidden'}`}
-            >
-              <WorkspaceView
-                workspace={workspace}
-                terminals={workspaceStore.getWorkspaceTerminals(workspace.id)}
-                focusedTerminalId={workspace.id === state.activeWorkspaceId ? state.focusedTerminalId : null}
-              />
-            </div>
-          ))
+        {activeWorkspace ? (
+          <WorkspaceView
+            workspace={activeWorkspace}
+            terminals={workspaceStore.getWorkspaceTerminals(activeWorkspace.id)}
+            focusedTerminalId={state.focusedTerminalId}
+          />
         ) : (
           <div className="empty-state">
             <h2>Welcome to Better Agent Terminal</h2>
