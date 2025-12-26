@@ -24,6 +24,7 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
   const isActiveRef = useRef(isActive)
   const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const hasNewOutputWhileHiddenRef = useRef(false)
+  const lastActivityUpdateRef = useRef(0)  // For throttling activity updates
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
 
   // Keep isActiveRef in sync with isActive prop (fixes closure issue in ResizeObserver)
@@ -97,25 +98,27 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
           const { cols, rows } = terminal
           window.electronAPI.pty.resize(terminalId, cols, rows)
 
-          // 2. Force refresh entire buffer (including scrollback history)
-          // This ensures all content written while terminal was hidden gets rendered
+          // 2. Only refresh visible viewport (not entire buffer) to reduce CPU usage
+          // scrollOnOutput: true handles auto-scrolling
+          const viewportRows = terminal.rows
           const totalRows = terminal.buffer.active.length
-          terminal.refresh(0, totalRows - 1)
+          const startRow = Math.max(0, totalRows - viewportRows)
+          terminal.refresh(startRow, totalRows - 1)
 
-          // 3. Scroll to bottom and focus
-          terminal.scrollToBottom()
+          // 3. Focus terminal (scrollOnOutput handles scroll position)
           terminal.focus()
 
           // 4. If there was new output while hidden, do additional refresh after a short delay
-          // to ensure xterm.js has fully processed the content
           if (hasNewOutputWhileHiddenRef.current) {
             hasNewOutputWhileHiddenRef.current = false
             setTimeout(() => {
               if (terminalRef.current && fitAddonRef.current) {
                 fitAddonRef.current.fit()
-                const totalRows = terminalRef.current.buffer.active.length
-                terminalRef.current.refresh(0, totalRows - 1)
-                terminalRef.current.scrollToBottom()
+                const term = terminalRef.current
+                const viewportRows = term.rows
+                const totalRows = term.buffer.active.length
+                const startRow = Math.max(0, totalRows - viewportRows)
+                term.refresh(startRow, totalRows - 1)
               }
             }, 50)
           }
@@ -159,14 +162,16 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
       // When window becomes visible again, just fit and refresh (no serialize/deserialize)
       if (visible && isActive && terminalRef.current && fitAddonRef.current) {
         requestAnimationFrame(() => {
+          const term = terminalRef.current!
           fitAddonRef.current?.fit()
-          const { cols, rows } = terminalRef.current!
+          const { cols, rows } = term
           window.electronAPI.pty.resize(terminalId, cols, rows)
 
-          // Refresh entire buffer to ensure content is displayed correctly
-          const totalRows = terminalRef.current!.buffer.active.length
-          terminalRef.current!.refresh(0, totalRows - 1)
-          terminalRef.current!.scrollToBottom()
+          // Only refresh visible viewport (scrollOnOutput handles scroll position)
+          const viewportRows = term.rows
+          const totalRows = term.buffer.active.length
+          const startRow = Math.max(0, totalRows - viewportRows)
+          term.refresh(startRow, totalRows - 1)
         })
       }
     })
@@ -310,8 +315,12 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
     const unsubscribeOutput = window.electronAPI.pty.onOutput((id, data) => {
       if (id === terminalId) {
         terminal.write(data)
-        // Update activity time when there's output
-        workspaceStore.updateTerminalActivity(terminalId)
+        // Throttle activity updates to 1 second to reduce state updates
+        const now = Date.now()
+        if (now - lastActivityUpdateRef.current > 1000) {
+          workspaceStore.updateTerminalActivity(terminalId)
+          lastActivityUpdateRef.current = now
+        }
         // Track if there's new output while terminal is hidden
         if (!isActiveRef.current) {
           hasNewOutputWhileHiddenRef.current = true

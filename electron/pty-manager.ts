@@ -291,13 +291,15 @@ export class PtyManager {
 
     if (type === 'claude-code') {
       // For Claude Code terminals, use happy or claude based on user selection
-      if (codeAgentType === 'claude') {
+      if (codeAgentType === 'claude' || codeAgentType === 'claude-chrome') {
         executable = this.findClaudeExecutable()
+        if (codeAgentType === 'claude-chrome') {
+          args = ['--chrome']
+        }
       } else {
         // Default to happy
         executable = this.findHappyExecutable()
       }
-      args = []
     } else {
       // For regular terminals, use the shell
       executable = shellOverride || this.getDefaultShell()
@@ -502,7 +504,7 @@ export class PtyManager {
     return false
   }
 
-  restart(id: string, cwd: string, shell?: string, codeAgentType?: 'happy' | 'claude'): boolean {
+  restart(id: string, cwd: string, shell?: string, codeAgentType?: 'happy' | 'claude' | 'claude-chrome'): boolean {
     const instance = this.instances.get(id)
     if (instance) {
       const type = instance.type

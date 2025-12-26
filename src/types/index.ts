@@ -1,5 +1,5 @@
 // Code Agent type for Claude Code terminals
-export type CodeAgentType = 'happy' | 'claude';
+export type CodeAgentType = 'happy' | 'claude' | 'claude-chrome';
 
 export interface Workspace {
   id: string;
@@ -32,7 +32,7 @@ export interface TerminalInstance {
   cwd: string;
   scrollbackBuffer: string[];
   lastActivityTime?: number;
-  codeAgentType?: CodeAgentType;  // For claude-code terminals: 'happy' or 'claude'
+  codeAgentType?: CodeAgentType;  // For claude-code terminals: 'happy', 'claude', or 'claude-chrome'
 }
 
 export interface AppState {
@@ -49,7 +49,7 @@ export interface CreatePtyOptions {
   type: 'terminal' | 'claude-code';
   shell?: string;
   sessionId?: string;
-  codeAgentType?: CodeAgentType;  // For claude-code: 'happy' or 'claude'
+  codeAgentType?: CodeAgentType;  // For claude-code: 'happy', 'claude', or 'claude-chrome'
 }
 
 export interface PtyOutput {

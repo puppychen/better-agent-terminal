@@ -27,6 +27,14 @@ export function CodeAgentSelectDialog({ onSelect }: CodeAgentSelectDialogProps) 
               <div className="agent-desc">Run local claude CLI directly</div>
             </div>
           </button>
+
+          <button className="agent-option" onClick={() => onSelect('claude-chrome')}>
+            <div className="agent-icon">CC</div>
+            <div className="agent-info">
+              <div className="agent-name">Claude with Chrome</div>
+              <div className="agent-desc">Claude CLI with Chrome MCP integration</div>
+            </div>
+          </button>
         </div>
       </div>
     </div>

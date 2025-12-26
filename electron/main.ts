@@ -109,7 +109,7 @@ ipcMain.handle('pty:kill', async (_event, id: string) => {
   return ptyManager?.kill(id)
 })
 
-ipcMain.handle('pty:restart', async (_event, id: string, cwd: string, shell?: string, codeAgentType?: 'happy' | 'claude') => {
+ipcMain.handle('pty:restart', async (_event, id: string, cwd: string, shell?: string, codeAgentType?: 'happy' | 'claude' | 'claude-chrome') => {
   return ptyManager?.restart(id, cwd, shell, codeAgentType)
 })
 
