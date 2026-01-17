@@ -1,50 +1,26 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, powerSaveBlocker } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import path from 'path'
-import { PtyManager } from './pty-manager'
 
 let mainWindow: BrowserWindow | null = null
-let ptyManager: PtyManager | null = null
-let powerSaveBlockerId: number | null = null
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
-// Prevent App Nap on macOS - must be set before app is ready
-if (process.platform === 'darwin') {
-  app.commandLine.appendSwitch('disable-renderer-backgrounding')
-  app.commandLine.appendSwitch('disable-background-timer-throttling')
-}
-
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 800,
-    minHeight: 600,
+    width: 380,
+    height: 700,
+    minWidth: 300,
+    minHeight: 400,
+    maxWidth: 500,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
-      contextIsolation: true,
-      backgroundThrottling: false  // Prevent throttling when app is in background
+      contextIsolation: true
     },
     frame: true,
     titleBarStyle: 'default',
-    title: 'Better Agent Terminal'
+    title: 'Better Agent'
   })
-
-  // Power save blocker is managed dynamically based on active terminal count
-  const updatePowerSaveBlocker = (terminalCount: number) => {
-    const hasActiveTerminals = terminalCount > 0
-    if (hasActiveTerminals && powerSaveBlockerId === null) {
-      powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension')
-      console.log('Power save blocker started (active terminals):', powerSaveBlockerId)
-    } else if (!hasActiveTerminals && powerSaveBlockerId !== null) {
-      powerSaveBlocker.stop(powerSaveBlockerId)
-      console.log('Power save blocker stopped (no active terminals)')
-      powerSaveBlockerId = null
-    }
-  }
-
-  ptyManager = new PtyManager(mainWindow, updatePowerSaveBlocker)
 
   if (VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(VITE_DEV_SERVER_URL)
@@ -53,28 +29,8 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
-  // Dispose PTY manager before window is destroyed to prevent IPC errors
-  mainWindow.on('close', () => {
-    ptyManager?.dispose()
-  })
-
   mainWindow.on('closed', () => {
     mainWindow = null
-    ptyManager = null
-    // Stop power save blocker
-    if (powerSaveBlockerId !== null) {
-      powerSaveBlocker.stop(powerSaveBlockerId)
-      powerSaveBlockerId = null
-    }
-  })
-
-  // Handle window visibility changes (e.g., macOS workspace switching)
-  mainWindow.on('show', () => {
-    mainWindow?.webContents.send('window-visibility-changed', true)
-  })
-
-  mainWindow.on('focus', () => {
-    mainWindow?.webContents.send('window-visibility-changed', true)
   })
 }
 
@@ -93,42 +49,6 @@ app.on('activate', () => {
 })
 
 // IPC Handlers
-ipcMain.handle('pty:create', async (_event, options) => {
-  return ptyManager?.create(options)
-})
-
-ipcMain.handle('pty:write', async (_event, id: string, data: string) => {
-  ptyManager?.write(id, data)
-})
-
-ipcMain.handle('pty:resize', async (_event, id: string, cols: number, rows: number) => {
-  ptyManager?.resize(id, cols, rows)
-})
-
-ipcMain.handle('pty:kill', async (_event, id: string) => {
-  return ptyManager?.kill(id)
-})
-
-ipcMain.handle('pty:restart', async (_event, id: string, cwd: string, shell?: string, codeAgentType?: 'happy' | 'claude' | 'claude-chrome') => {
-  return ptyManager?.restart(id, cwd, shell, codeAgentType)
-})
-
-ipcMain.handle('pty:get-cwd', async (_event, id: string) => {
-  return ptyManager?.getCwd(id)
-})
-
-ipcMain.handle('pty:exists', async (_event, id: string) => {
-  return ptyManager?.exists(id) ?? false
-})
-
-ipcMain.handle('pty:get-output-buffer', async (_event, id: string) => {
-  return ptyManager?.getOutputBuffer(id)
-})
-
-ipcMain.handle('pty:clear-output-buffer', async (_event, id: string) => {
-  ptyManager?.clearOutputBuffer(id)
-})
-
 ipcMain.handle('dialog:select-folder', async () => {
   const result = await dialog.showOpenDialog(mainWindow!, {
     properties: ['openDirectory']
@@ -154,66 +74,6 @@ ipcMain.handle('workspace:load', async () => {
   }
 })
 
-// Settings handlers
-ipcMain.handle('settings:save', async (_event, data: string) => {
-  const fs = await import('fs/promises')
-  const configPath = path.join(app.getPath('userData'), 'settings.json')
-  await fs.writeFile(configPath, data, 'utf-8')
-  return true
-})
-
-ipcMain.handle('settings:load', async () => {
-  const fs = await import('fs/promises')
-  const configPath = path.join(app.getPath('userData'), 'settings.json')
-  try {
-    const data = await fs.readFile(configPath, 'utf-8')
-    return data
-  } catch {
-    return null
-  }
-})
-
-ipcMain.handle('settings:get-shell-path', async (_event, shellType: string) => {
-  const fs = await import('fs')
-
-  // Handle auto - return undefined to let pty-manager use its cross-platform logic
-  if (shellType === 'auto') {
-    return undefined
-  }
-
-  // Windows-specific shells
-  if (process.platform === 'win32') {
-    if (shellType === 'pwsh') {
-      const pwshPaths = [
-        'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
-        'C:\\Program Files (x86)\\PowerShell\\7\\pwsh.exe',
-        process.env.LOCALAPPDATA + '\\Microsoft\\WindowsApps\\pwsh.exe'
-      ]
-      for (const p of pwshPaths) {
-        if (fs.existsSync(p)) {
-          return p
-        }
-      }
-      return 'pwsh.exe'
-    }
-
-    if (shellType === 'powershell') {
-      return 'powershell.exe'
-    }
-
-    if (shellType === 'cmd') {
-      return 'cmd.exe'
-    }
-  }
-
-  // macOS/Linux - return undefined for default shells to use pty-manager logic
-  if (shellType === 'zsh' || shellType === 'bash') {
-    return undefined // Let pty-manager handle it
-  }
-
-  return shellType // custom path
-})
-
 ipcMain.handle('shell:open-external', async (_event, url: string) => {
   await shell.openExternal(url)
 })
@@ -231,18 +91,14 @@ ipcMain.handle('shell:open-with-app', async (_event, appName: string, folderPath
   }
 
   if (process.platform === 'darwin') {
-    // macOS: use open -a "AppName" /path
     exec(`open -a "${appName}" "${folderPath}"`, handleExecError)
   } else if (process.platform === 'win32') {
-    // Windows: VS Code uses 'code', JetBrains IDEs use their launcher scripts
     if (appName === 'Visual Studio Code') {
       exec(`code "${folderPath}"`, handleExecError)
     } else {
-      // JetBrains IDEs - try to find in common locations
       exec(`"${appName}" "${folderPath}"`, handleExecError)
     }
   } else {
-    // Linux: similar to Windows approach
     exec(`${appName.toLowerCase().replace(/ /g, '')} "${folderPath}"`, handleExecError)
   }
 })
@@ -284,12 +140,10 @@ async function findExistingTerminalTab(pattern: string, matchMode: 'startsWith' 
 }
 
 // Helper: Find Terminal tab running specific command (claude/happy) at specific path
-// Uses tty to lookup the actual working directory of the process
-async function findTerminalTabByProcessCwd(titlePattern: string, processName: string, targetPath: string): Promise<boolean> {
+async function findTerminalTabByProcessCwd(titlePattern: string, processName: string, targetPath: string, updateTitle?: string): Promise<boolean> {
   const { exec } = await import('child_process')
 
   return new Promise((resolve) => {
-    // Step 1: Get all tabs with matching title and their tty
     const escapedPattern = titlePattern.replace(/"/g, '\\"')
     const script = `
       tell application "Terminal"
@@ -317,10 +171,8 @@ async function findTerminalTabByProcessCwd(titlePattern: string, processName: st
         return
       }
 
-      // Parse tab info: "winId,tabIndex,tty"
       const tabs = stdout.trim().split('\n').filter(Boolean)
 
-      // Step 2: For each tab, check if the process cwd matches targetPath
       const checkNextTab = (index: number) => {
         if (index >= tabs.length) {
           resolve(false)
@@ -330,14 +182,30 @@ async function findTerminalTabByProcessCwd(titlePattern: string, processName: st
         const [winId, tabIndex, tty] = tabs[index].split(',')
         const ttyShort = tty.replace('/dev/', '')
 
-        // Get cwd of the process on this tty
         const cwdCmd = `ps -t ${ttyShort} -o pid,comm 2>/dev/null | grep "${processName}" | head -1 | awk '{print $1}' | xargs -I{} lsof -a -d cwd -p {} 2>/dev/null | awk 'NR==2 {print $NF}'`
 
         exec(cwdCmd, (err, cwdOutput) => {
           const cwd = cwdOutput?.trim()
           if (cwd === targetPath) {
-            // Found matching tab, focus it
-            const focusScript = `
+            // Build focus script with title update for both tab and window
+            const escapedTitle = updateTitle ? updateTitle.replace(/"/g, '\\"') : ''
+
+            const focusScript = updateTitle
+              ? `
+              tell application "Terminal"
+                set w to window id ${winId}
+                set frontmost of w to true
+                set selected of tab ${tabIndex} of w to true
+                set custom title of tab ${tabIndex} of w to "${escapedTitle}"
+                set title displays custom title of tab ${tabIndex} of w to true
+                set title displays shell path of tab ${tabIndex} of w to false
+                set title displays window size of tab ${tabIndex} of w to false
+                set title displays device name of tab ${tabIndex} of w to false
+                set title displays file name of tab ${tabIndex} of w to false
+                activate
+              end tell
+            `
+              : `
               tell application "Terminal"
                 set w to window id ${winId}
                 set frontmost of w to true
@@ -365,23 +233,29 @@ async function openNewTerminalTab(folderPath: string, titlePrefix: string, comma
   const escapedPath = folderPath.replace(/"/g, '\\"')
   const escapedTitle = titlePrefix.replace(/"/g, '\\"')
 
-  // Build the command: set title, then optionally run user command
-  let terminalCommand = `printf '\\\\e]0;${escapedTitle}\\\\a' && cd \\"${escapedPath}\\"`
+  // Build the final command (set title + run command or clear)
+  let finalCommand: string
   if (command) {
     const escapedCommand = command.replace(/'/g, "'\\''")
-    terminalCommand += ` && ${escapedCommand}`
+    finalCommand = `printf '\\\\e]0;${escapedTitle}\\\\a'; ${escapedCommand}`
   } else {
-    terminalCommand += ' && clear'
+    finalCommand = `printf '\\\\e]0;${escapedTitle}\\\\a'; clear`
   }
 
+  // Split into two steps: cd first, wait, then run command
+  // This ensures Terminal updates the directory display before running the agent
   const script = `tell application "Terminal"
     activate
     if (count of windows) > 0 then
       tell application "System Events" to keystroke "t" using command down
       delay 0.3
-      do script "${terminalCommand}" in front window
+      do script "cd \\"${escapedPath}\\"" in front window
+      delay 0.2
+      do script "${finalCommand}" in front window
     else
-      do script "${terminalCommand}"
+      do script "cd \\"${escapedPath}\\""
+      delay 0.2
+      do script "${finalCommand}" in front window
     end if
   end tell`
 
@@ -396,14 +270,10 @@ async function openNewTerminalTab(folderPath: string, titlePrefix: string, comma
 ipcMain.handle('shell:open-terminal-at-path', async (_event, folderPath: string) => {
   if (process.platform === 'darwin') {
     const titlePrefix = `BA:${folderPath}`
-
-    // Try to find and focus existing tab
     const found = await findExistingTerminalTab(titlePrefix)
     if (found) {
       return { action: 'focused' }
     }
-
-    // Open new tab with title marker
     await openNewTerminalTab(folderPath, titlePrefix)
     return { action: 'created' }
   }
@@ -416,13 +286,10 @@ ipcMain.handle('shell:open-terminal-with-command', async (_event, folderPath: st
     let found = false
 
     if (command.startsWith('happy')) {
-      // Happy CLI: search by title pattern + process cwd
       found = await findTerminalTabByProcessCwd('Happy', 'happy', folderPath)
     } else if (command.startsWith('claude')) {
-      // Claude CLI: search by title pattern + process cwd
       found = await findTerminalTabByProcessCwd('Claude Code', 'claude', folderPath)
     } else {
-      // For other commands, use title-based search
       found = await findExistingTerminalTab(`BA:CMD:${folderPath}`)
     }
 
@@ -430,10 +297,46 @@ ipcMain.handle('shell:open-terminal-with-command', async (_event, folderPath: st
       return { action: 'focused' }
     }
 
-    // Open new tab
     const titlePrefix = `BA:CMD:${folderPath}`
     await openNewTerminalTab(folderPath, titlePrefix, command)
     return { action: 'created' }
   }
   return { action: 'unsupported' }
+})
+
+// Check if agent (claude/happy) is running at specified path
+ipcMain.handle('shell:check-agent-running', async (_event, folderPath: string) => {
+  if (process.platform === 'darwin') {
+    // Check for Claude Code first
+    const claudeFound = await findTerminalTabByProcessCwd('Claude Code', 'claude', folderPath)
+    if (claudeFound) {
+      return { running: true, type: 'claude' }
+    }
+
+    // Check for Happy
+    const happyFound = await findTerminalTabByProcessCwd('Happy', 'happy', folderPath)
+    if (happyFound) {
+      return { running: true, type: 'happy' }
+    }
+
+    return { running: false }
+  }
+  return { running: false }
+})
+
+// Focus existing agent tab (used when agent is already running)
+ipcMain.handle('shell:focus-agent', async (_event, folderPath: string, agentType: 'claude' | 'happy') => {
+  if (process.platform === 'darwin') {
+    // Extract folder name for display in title
+    const folderName = folderPath.split('/').pop() || folderPath
+
+    if (agentType === 'claude') {
+      const title = `Claude Code: ${folderName}`
+      return await findTerminalTabByProcessCwd('Claude Code', 'claude', folderPath, title)
+    } else {
+      const title = `Happy: ${folderName}`
+      return await findTerminalTabByProcessCwd('Happy', 'happy', folderPath, title)
+    }
+  }
+  return false
 })

@@ -1,21 +1,15 @@
 import { v4 as uuidv4 } from 'uuid'
-import type { Workspace, TerminalInstance, AppState, CodeAgentType } from '../types'
-
-// Note: uuidv4 is still used for generating workspace and terminal IDs
+import type { Workspace, AppState } from '../types'
 
 type Listener = () => void
 
 class WorkspaceStore {
   private state: AppState = {
     workspaces: [],
-    activeWorkspaceId: null,
-    terminals: [],
-    activeTerminalId: null,
-    focusedTerminalId: null
+    activeWorkspaceId: null
   }
 
   private listeners: Set<Listener> = new Set()
-  private activityListeners: Set<Listener> = new Set()
 
   getState(): AppState {
     return this.state
@@ -26,17 +20,8 @@ class WorkspaceStore {
     return () => this.listeners.delete(listener)
   }
 
-  subscribeToActivity(listener: Listener): () => void {
-    this.activityListeners.add(listener)
-    return () => this.activityListeners.delete(listener)
-  }
-
   private notify(): void {
     this.listeners.forEach(listener => listener())
-  }
-
-  private notifyActivity(): void {
-    this.activityListeners.forEach(listener => listener())
   }
 
   // Workspace actions
@@ -56,23 +41,23 @@ class WorkspaceStore {
     }
 
     this.notify()
+    this.save()
     return workspace
   }
 
   removeWorkspace(id: string): void {
-    const terminals = this.state.terminals.filter(t => t.workspaceId !== id)
     const workspaces = this.state.workspaces.filter(w => w.id !== id)
 
     this.state = {
       ...this.state,
       workspaces,
-      terminals,
       activeWorkspaceId: this.state.activeWorkspaceId === id
         ? (workspaces[0]?.id ?? null)
         : this.state.activeWorkspaceId
     }
 
     this.notify()
+    this.save()
   }
 
   setActiveWorkspace(id: string): void {
@@ -80,8 +65,7 @@ class WorkspaceStore {
 
     this.state = {
       ...this.state,
-      activeWorkspaceId: id,
-      focusedTerminalId: null
+      activeWorkspaceId: id
     }
 
     this.notify()
@@ -97,6 +81,7 @@ class WorkspaceStore {
     }
 
     this.notify()
+    this.save()
   }
 
   setWorkspaceRole(id: string, role: string): void {
@@ -137,7 +122,6 @@ class WorkspaceStore {
     if (fromIndex === -1 || toIndex === -1) return
 
     const [removed] = workspaces.splice(fromIndex, 1)
-    // When moving forward (fromIndex < toIndex), the target index shifts by -1 after removal
     const insertIndex = fromIndex < toIndex ? toIndex - 1 : toIndex
     workspaces.splice(insertIndex, 0, removed)
 
@@ -148,187 +132,6 @@ class WorkspaceStore {
 
     this.notify()
     this.save()
-  }
-
-  // Terminal actions
-  addTerminal(workspaceId: string, type: 'terminal' | 'claude-code', codeAgentType?: CodeAgentType): TerminalInstance {
-    const workspace = this.state.workspaces.find(w => w.id === workspaceId)
-    if (!workspace) throw new Error('Workspace not found')
-
-    const existingTerminals = this.state.terminals.filter(
-      t => t.workspaceId === workspaceId && t.type === 'terminal'
-    )
-
-    const terminal: TerminalInstance = {
-      id: uuidv4(),
-      workspaceId,
-      type,
-      title: type === 'claude-code' ? 'Code Agent' : `Terminal ${existingTerminals.length + 1}`,
-      cwd: workspace.folderPath,
-      scrollbackBuffer: [],
-      lastActivityTime: Date.now(),
-      codeAgentType: type === 'claude-code' ? codeAgentType : undefined
-    }
-
-    // Only auto-focus Claude Code, keep current focus for regular terminals
-    const shouldFocus = type === 'claude-code' || !this.state.focusedTerminalId
-
-    this.state = {
-      ...this.state,
-      terminals: [...this.state.terminals, terminal],
-      focusedTerminalId: shouldFocus ? terminal.id : this.state.focusedTerminalId
-    }
-
-    this.notify()
-    return terminal
-  }
-
-  removeTerminal(id: string): void {
-    const terminals = this.state.terminals.filter(t => t.id !== id)
-
-    this.state = {
-      ...this.state,
-      terminals,
-      focusedTerminalId: this.state.focusedTerminalId === id
-        ? (terminals[0]?.id ?? null)
-        : this.state.focusedTerminalId
-    }
-
-    this.notify()
-  }
-
-  setFocusedTerminal(id: string | null): void {
-    if (this.state.focusedTerminalId === id) return
-
-    this.state = {
-      ...this.state,
-      focusedTerminalId: id
-    }
-
-    this.notify()
-  }
-
-  updateTerminalCwd(id: string, cwd: string): void {
-    this.state = {
-      ...this.state,
-      terminals: this.state.terminals.map(t =>
-        t.id === id ? { ...t, cwd } : t
-      )
-    }
-
-    this.notify()
-  }
-
-  updateTerminalCodeAgentType(id: string, codeAgentType: CodeAgentType): void {
-    this.state = {
-      ...this.state,
-      terminals: this.state.terminals.map(t =>
-        t.id === id ? { ...t, codeAgentType } : t
-      )
-    }
-
-    this.notify()
-  }
-
-  appendScrollback(id: string, data: string): void {
-    this.state = {
-      ...this.state,
-      terminals: this.state.terminals.map(t =>
-        t.id === id ? { ...t, scrollbackBuffer: [...t.scrollbackBuffer, data] } : t
-      )
-    }
-    // Don't notify for scrollback updates to avoid re-renders
-  }
-
-  clearScrollback(id: string): void {
-    this.state = {
-      ...this.state,
-      terminals: this.state.terminals.map(t =>
-        t.id === id ? { ...t, scrollbackBuffer: [] } : t
-      )
-    }
-
-    this.notify()
-  }
-
-  // Get terminals for current workspace
-  getWorkspaceTerminals(workspaceId: string): TerminalInstance[] {
-    return this.state.terminals.filter(t => t.workspaceId === workspaceId)
-  }
-
-  getClaudeCodeTerminal(workspaceId: string): TerminalInstance | undefined {
-    return this.state.terminals.find(
-      t => t.workspaceId === workspaceId && t.type === 'claude-code'
-    )
-  }
-
-  getRegularTerminals(workspaceId: string): TerminalInstance[] {
-    return this.state.terminals.filter(
-      t => t.workspaceId === workspaceId && t.type === 'terminal'
-    )
-  }
-
-  // Activity tracking
-  private lastActivityNotify: number = 0
-
-  updateTerminalActivity(id: string): void {
-    const now = Date.now()
-    this.state = {
-      ...this.state,
-      terminals: this.state.terminals.map(t =>
-        t.id === id ? { ...t, lastActivityTime: now } : t
-      )
-    }
-    // Throttle activity notifications (max once per 500ms)
-    // Only notify activity listeners, not all subscribers
-    if (now - this.lastActivityNotify > 500) {
-      this.lastActivityNotify = now
-      this.notifyActivity()
-    }
-  }
-
-  clearTerminalActivity(id: string): void {
-    this.state = {
-      ...this.state,
-      terminals: this.state.terminals.map(t =>
-        t.id === id ? { ...t, lastActivityTime: undefined } : t
-      )
-    }
-    this.notifyActivity()
-  }
-
-  getWorkspaceLastActivity(workspaceId: string): number | null {
-    const terminals = this.getWorkspaceTerminals(workspaceId)
-    const lastActivities = terminals
-      .map(t => t.lastActivityTime)
-      .filter((time): time is number => time !== undefined)
-
-    return lastActivities.length > 0 ? Math.max(...lastActivities) : null
-  }
-
-  // Terminal switching
-  switchToNextTerminal(): void {
-    const { activeWorkspaceId, focusedTerminalId } = this.state
-    if (!activeWorkspaceId) return
-
-    const terminals = this.getWorkspaceTerminals(activeWorkspaceId)
-    if (terminals.length <= 1) return
-
-    const currentIndex = terminals.findIndex(t => t.id === focusedTerminalId)
-    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % terminals.length
-    this.setFocusedTerminal(terminals[nextIndex].id)
-  }
-
-  switchToPreviousTerminal(): void {
-    const { activeWorkspaceId, focusedTerminalId } = this.state
-    if (!activeWorkspaceId) return
-
-    const terminals = this.getWorkspaceTerminals(activeWorkspaceId)
-    if (terminals.length <= 1) return
-
-    const currentIndex = terminals.findIndex(t => t.id === focusedTerminalId)
-    const prevIndex = currentIndex <= 0 ? terminals.length - 1 : currentIndex - 1
-    this.setFocusedTerminal(terminals[prevIndex].id)
   }
 
   // Workspace switching (within current tab only)

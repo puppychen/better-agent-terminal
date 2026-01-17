@@ -1,4 +1,4 @@
-// Code Agent type for Claude Code terminals
+// Code Agent type for external Terminal
 export type CodeAgentType = 'happy' | 'claude' | 'claude-chrome';
 
 export interface Workspace {
@@ -8,7 +8,6 @@ export interface Workspace {
   role?: string;
   folderPath: string;
   createdAt: number;
-  claudeSessionId?: string;
   tabId?: number;  // 1, 2, or 3. Default to 1 if undefined
 }
 
@@ -23,51 +22,7 @@ export const PRESET_ROLES = [
   { id: 'custom', name: 'Custom', color: '#dfdbc3' },
 ] as const;
 
-export interface TerminalInstance {
-  id: string;
-  workspaceId: string;
-  type: 'terminal' | 'claude-code';
-  title: string;
-  alias?: string;
-  pid?: number;
-  cwd: string;
-  scrollbackBuffer: string[];
-  lastActivityTime?: number;
-  codeAgentType?: CodeAgentType;  // For claude-code terminals: 'happy', 'claude', or 'claude-chrome'
-}
-
 export interface AppState {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
-  terminals: TerminalInstance[];
-  activeTerminalId: string | null;
-  focusedTerminalId: string | null;
-}
-
-export interface CreatePtyOptions {
-  id: string;
-  cwd: string;
-  type: 'terminal' | 'claude-code';
-  shell?: string;
-  sessionId?: string;
-  codeAgentType?: CodeAgentType;  // For claude-code: 'happy', 'claude', or 'claude-chrome'
-}
-
-export interface PtyOutput {
-  id: string;
-  data: string;
-}
-
-export interface PtyExit {
-  id: string;
-  exitCode: number;
-}
-
-export type ShellType = 'auto' | 'pwsh' | 'powershell' | 'cmd' | 'custom';
-
-export interface AppSettings {
-  shell: ShellType;
-  customShellPath: string;
-  fontSize: number;
-  theme: 'dark' | 'light';
 }

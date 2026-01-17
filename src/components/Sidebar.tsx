@@ -1,9 +1,7 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import type { Workspace, CodeAgentType } from '../types'
 import { PRESET_ROLES } from '../types'
-import { ActivityIndicator } from './ActivityIndicator'
 import { CodeAgentSelectDialog } from './CodeAgentSelectDialog'
-import { workspaceStore } from '../stores/workspace-store'
 
 interface SidebarProps {
   workspaces: Workspace[]
@@ -15,7 +13,6 @@ interface SidebarProps {
   onSetWorkspaceRole: (id: string, role: string) => void
   onSetWorkspaceTab: (id: string, tabId: number) => void
   onReorderWorkspaces: (fromId: string, toId: string) => void
-  onOpenSettings: () => void
   onOpenAbout: () => void
   width?: number
 }
@@ -36,7 +33,6 @@ export function Sidebar({
   onSetWorkspaceRole,
   onSetWorkspaceTab,
   onReorderWorkspaces,
-  onOpenSettings,
   onOpenAbout,
   width
 }: SidebarProps) {
@@ -83,112 +79,6 @@ export function Sidebar({
     return counts
   }, [workspaces])
 
-  // Activity timeout in milliseconds
-  const ACTIVITY_TIMEOUT = 10000
-
-  // Track tab activity status with dedicated state
-  const [tabActiveStatus, setTabActiveStatus] = useState<Record<number, boolean>>({ 1: false, 2: false, 3: false })
-
-  // Ref to manage timeout without causing re-renders
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // Helper function to compute tab active status
-  const computeTabActiveStatus = useCallback(() => {
-    const status: Record<number, boolean> = { 1: false, 2: false, 3: false }
-    const now = Date.now()
-
-    workspaces.forEach(w => {
-      const tabId = w.tabId || 1
-      const lastActivity = workspaceStore.getWorkspaceLastActivity(w.id)
-      if (lastActivity && (now - lastActivity <= ACTIVITY_TIMEOUT)) {
-        status[tabId] = true
-      }
-    })
-
-    return status
-  }, [workspaces])
-
-  // Helper function to find earliest activity time
-  const findEarliestActivity = useCallback(() => {
-    const now = Date.now()
-    let earliest: number | null = null
-
-    workspaces.forEach(w => {
-      const lastActivity = workspaceStore.getWorkspaceLastActivity(w.id)
-      if (lastActivity && (now - lastActivity <= ACTIVITY_TIMEOUT)) {
-        if (!earliest || lastActivity < earliest) {
-          earliest = lastActivity
-        }
-      }
-    })
-
-    return earliest
-  }, [workspaces])
-
-  // Schedule timeout to check for activity expiration
-  const scheduleTimeoutCheck = useCallback(() => {
-    // Clear existing timeout
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current)
-      timeoutRef.current = null
-    }
-
-    const earliestActivity = findEarliestActivity()
-    if (!earliestActivity) return
-
-    const now = Date.now()
-    const remainingTime = ACTIVITY_TIMEOUT - (now - earliestActivity) + 100
-
-    if (remainingTime <= 0) {
-      setTabActiveStatus({ 1: false, 2: false, 3: false })
-      return
-    }
-
-    timeoutRef.current = setTimeout(() => {
-      const newStatus = computeTabActiveStatus()
-      setTabActiveStatus(prev => {
-        if (prev[1] === newStatus[1] && prev[2] === newStatus[2] && prev[3] === newStatus[3]) {
-          return prev
-        }
-        return newStatus
-      })
-      // Schedule next check if there's still activity
-      if (Object.values(newStatus).some(Boolean)) {
-        scheduleTimeoutCheck()
-      }
-    }, remainingTime)
-  }, [computeTabActiveStatus, findEarliestActivity])
-
-  // Subscribe to activity updates and manage timeout
-  useEffect(() => {
-    const updateStatus = () => {
-      const newStatus = computeTabActiveStatus()
-      setTabActiveStatus(prev => {
-        if (prev[1] === newStatus[1] && prev[2] === newStatus[2] && prev[3] === newStatus[3]) {
-          return prev
-        }
-        return newStatus
-      })
-      // Schedule timeout check when there's activity
-      if (Object.values(newStatus).some(Boolean)) {
-        scheduleTimeoutCheck()
-      }
-    }
-
-    // Initial check
-    updateStatus()
-
-    // Subscribe to activity updates only
-    const unsubscribe = workspaceStore.subscribeToActivity(updateStatus)
-
-    return () => {
-      unsubscribe()
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current)
-      }
-    }
-  }, [computeTabActiveStatus, scheduleTimeoutCheck])
-
   useEffect(() => {
     if (editingId && inputRef.current) {
       inputRef.current.focus()
@@ -223,6 +113,22 @@ export function Sidebar({
   const handleOpenNativeTerminal = (folderPath: string, e: React.MouseEvent) => {
     e.stopPropagation()
     window.electronAPI.shell.openTerminalAtPath(folderPath)
+  }
+
+  // Smart CAgent click handler: check if running first, then focus or show dialog
+  const handleCAgentClick = async (workspace: Workspace, e: React.MouseEvent) => {
+    e.stopPropagation()
+
+    // Check if agent is already running at this path
+    const result = await window.electronAPI.shell.checkAgentRunning(workspace.folderPath)
+
+    if (result.running && result.type) {
+      // Agent is running, focus on it
+      await window.electronAPI.shell.focusAgent(workspace.folderPath, result.type as 'claude' | 'happy')
+    } else {
+      // No agent running, show selection dialog
+      setTerminalAgentDialogId(workspace.id)
+    }
   }
 
   const handleTerminalAgentSelect = (folderPath: string, agentType: CodeAgentType) => {
@@ -364,7 +270,6 @@ export function Sidebar({
             onDragLeave={handleTabDragLeave}
             onDrop={(e) => handleTabDrop(tabId, e)}
           >
-            {tabActiveStatus[tabId] && <span className="tab-activity-dot" />}
             Tab {tabId}
             <span className="tab-count">{tabCounts[tabId]}</span>
           </button>
@@ -461,10 +366,6 @@ export function Sidebar({
                 </div>
               )}
               <div className="workspace-item-actions">
-                <ActivityIndicator
-                  workspaceId={workspace.id}
-                  size="small"
-                />
                 <button
                   className="folder-btn"
                   onClick={(e) => {
@@ -484,10 +385,7 @@ export function Sidebar({
                 </button>
                 <button
                   className="agent-terminal-btn"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setTerminalAgentDialogId(workspace.id)
-                  }}
+                  onClick={(e) => handleCAgentClick(workspace, e)}
                   title="Open Code Agent in Terminal"
                 >
                   CAgent
@@ -540,9 +438,6 @@ export function Sidebar({
           + Add Workspace
         </button>
         <div className="sidebar-footer-buttons">
-          <button className="settings-btn" onClick={onOpenSettings}>
-            Settings
-          </button>
           <button className="settings-btn" onClick={onOpenAbout}>
             About
           </button>

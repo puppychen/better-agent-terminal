@@ -1,36 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CreatePtyOptions, CodeAgentType } from '../src/types'
+import type { CodeAgentType } from '../src/types'
 
 const electronAPI = {
-  pty: {
-    create: (options: CreatePtyOptions) => ipcRenderer.invoke('pty:create', options),
-    write: (id: string, data: string) => ipcRenderer.invoke('pty:write', id, data),
-    resize: (id: string, cols: number, rows: number) => ipcRenderer.invoke('pty:resize', id, cols, rows),
-    kill: (id: string) => ipcRenderer.invoke('pty:kill', id),
-    restart: (id: string, cwd: string, shell?: string, codeAgentType?: CodeAgentType) => ipcRenderer.invoke('pty:restart', id, cwd, shell, codeAgentType),
-    getCwd: (id: string) => ipcRenderer.invoke('pty:get-cwd', id),
-    exists: (id: string) => ipcRenderer.invoke('pty:exists', id) as Promise<boolean>,
-    getOutputBuffer: (id: string) => ipcRenderer.invoke('pty:get-output-buffer', id) as Promise<string | null>,
-    clearOutputBuffer: (id: string) => ipcRenderer.invoke('pty:clear-output-buffer', id),
-    onOutput: (callback: (id: string, data: string) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, id: string, data: string) => callback(id, data)
-      ipcRenderer.on('pty:output', handler)
-      return () => ipcRenderer.removeListener('pty:output', handler)
-    },
-    onExit: (callback: (id: string, exitCode: number) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, id: string, exitCode: number) => callback(id, exitCode)
-      ipcRenderer.on('pty:exit', handler)
-      return () => ipcRenderer.removeListener('pty:exit', handler)
-    }
-  },
   workspace: {
     save: (data: string) => ipcRenderer.invoke('workspace:save', data),
     load: () => ipcRenderer.invoke('workspace:load')
-  },
-  settings: {
-    save: (data: string) => ipcRenderer.invoke('settings:save', data),
-    load: () => ipcRenderer.invoke('settings:load'),
-    getShellPath: (shell: string) => ipcRenderer.invoke('settings:get-shell-path', shell)
   },
   dialog: {
     selectFolder: () => ipcRenderer.invoke('dialog:select-folder')
@@ -40,14 +14,9 @@ const electronAPI = {
     openPath: (path: string) => ipcRenderer.invoke('shell:open-path', path),
     openWithApp: (appName: string, path: string) => ipcRenderer.invoke('shell:open-with-app', appName, path),
     openTerminalAtPath: (path: string) => ipcRenderer.invoke('shell:open-terminal-at-path', path),
-    openTerminalWithCommand: (path: string, command: string) => ipcRenderer.invoke('shell:open-terminal-with-command', path, command)
-  },
-  window: {
-    onVisibilityChanged: (callback: (visible: boolean) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, visible: boolean) => callback(visible)
-      ipcRenderer.on('window-visibility-changed', handler)
-      return () => ipcRenderer.removeListener('window-visibility-changed', handler)
-    }
+    openTerminalWithCommand: (path: string, command: string) => ipcRenderer.invoke('shell:open-terminal-with-command', path, command),
+    checkAgentRunning: (path: string) => ipcRenderer.invoke('shell:check-agent-running', path) as Promise<{ running: boolean; type?: CodeAgentType }>,
+    focusAgent: (path: string, agentType: 'claude' | 'happy') => ipcRenderer.invoke('shell:focus-agent', path, agentType) as Promise<boolean>
   }
 }
 
