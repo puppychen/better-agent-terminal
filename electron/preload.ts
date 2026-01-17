@@ -38,7 +38,9 @@ const electronAPI = {
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
     openPath: (path: string) => ipcRenderer.invoke('shell:open-path', path),
-    openWithApp: (appName: string, path: string) => ipcRenderer.invoke('shell:open-with-app', appName, path)
+    openWithApp: (appName: string, path: string) => ipcRenderer.invoke('shell:open-with-app', appName, path),
+    openTerminalAtPath: (path: string) => ipcRenderer.invoke('shell:open-terminal-at-path', path),
+    openTerminalWithCommand: (path: string, command: string) => ipcRenderer.invoke('shell:open-terminal-with-command', path, command)
   },
   window: {
     onVisibilityChanged: (callback: (visible: boolean) => void) => {

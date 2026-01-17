@@ -246,3 +246,194 @@ ipcMain.handle('shell:open-with-app', async (_event, appName: string, folderPath
     exec(`${appName.toLowerCase().replace(/ /g, '')} "${folderPath}"`, handleExecError)
   }
 })
+
+// Helper: Find existing Terminal.app tab with matching title (startsWith or contains)
+async function findExistingTerminalTab(pattern: string, matchMode: 'startsWith' | 'contains' = 'startsWith'): Promise<boolean> {
+  const { exec } = await import('child_process')
+  return new Promise((resolve) => {
+    const escapedPattern = pattern.replace(/"/g, '\\"')
+    const condition = matchMode === 'startsWith'
+      ? `custom title of t starts with "${escapedPattern}"`
+      : `custom title of t contains "${escapedPattern}"`
+
+    const script = `
+      tell application "Terminal"
+        if not running then return false
+        repeat with w in windows
+          repeat with i from 1 to (count of tabs of w)
+            set t to tab i of w
+            if ${condition} then
+              set frontmost of w to true
+              set selected of t to true
+              activate
+              return true
+            end if
+          end repeat
+        end repeat
+        return false
+      end tell
+    `
+    exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (error, stdout) => {
+      if (error) {
+        resolve(false)
+        return
+      }
+      resolve(stdout.trim() === 'true')
+    })
+  })
+}
+
+// Helper: Find Terminal tab running specific command (claude/happy) at specific path
+// Uses tty to lookup the actual working directory of the process
+async function findTerminalTabByProcessCwd(titlePattern: string, processName: string, targetPath: string): Promise<boolean> {
+  const { exec } = await import('child_process')
+
+  return new Promise((resolve) => {
+    // Step 1: Get all tabs with matching title and their tty
+    const escapedPattern = titlePattern.replace(/"/g, '\\"')
+    const script = `
+      tell application "Terminal"
+        if not running then return ""
+        set output to ""
+        repeat with w in windows
+          set winId to id of w
+          set tabCount to count of tabs of w
+          repeat with i from 1 to tabCount
+            set t to tab i of w
+            set tabTitle to custom title of t
+            if tabTitle contains "${escapedPattern}" then
+              set tabTty to tty of t
+              set output to output & (winId as string) & "," & (i as string) & "," & tabTty & linefeed
+            end if
+          end repeat
+        end repeat
+        return output
+      end tell
+    `
+
+    exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (error, stdout) => {
+      if (error || !stdout.trim()) {
+        resolve(false)
+        return
+      }
+
+      // Parse tab info: "winId,tabIndex,tty"
+      const tabs = stdout.trim().split('\n').filter(Boolean)
+
+      // Step 2: For each tab, check if the process cwd matches targetPath
+      const checkNextTab = (index: number) => {
+        if (index >= tabs.length) {
+          resolve(false)
+          return
+        }
+
+        const [winId, tabIndex, tty] = tabs[index].split(',')
+        const ttyShort = tty.replace('/dev/', '')
+
+        // Get cwd of the process on this tty
+        const cwdCmd = `ps -t ${ttyShort} -o pid,comm 2>/dev/null | grep "${processName}" | head -1 | awk '{print $1}' | xargs -I{} lsof -a -d cwd -p {} 2>/dev/null | awk 'NR==2 {print $NF}'`
+
+        exec(cwdCmd, (err, cwdOutput) => {
+          const cwd = cwdOutput?.trim()
+          if (cwd === targetPath) {
+            // Found matching tab, focus it
+            const focusScript = `
+              tell application "Terminal"
+                set w to window id ${winId}
+                set frontmost of w to true
+                set selected of tab ${tabIndex} of w to true
+                activate
+              end tell
+            `
+            exec(`osascript -e '${focusScript.replace(/'/g, "'\\''")}'`, () => {
+              resolve(true)
+            })
+          } else {
+            checkNextTab(index + 1)
+          }
+        })
+      }
+
+      checkNextTab(0)
+    })
+  })
+}
+
+// Helper: Open new Terminal.app tab with title marker
+async function openNewTerminalTab(folderPath: string, titlePrefix: string, command?: string): Promise<void> {
+  const { exec } = await import('child_process')
+  const escapedPath = folderPath.replace(/"/g, '\\"')
+  const escapedTitle = titlePrefix.replace(/"/g, '\\"')
+
+  // Build the command: set title, then optionally run user command
+  let terminalCommand = `printf '\\\\e]0;${escapedTitle}\\\\a' && cd \\"${escapedPath}\\"`
+  if (command) {
+    const escapedCommand = command.replace(/'/g, "'\\''")
+    terminalCommand += ` && ${escapedCommand}`
+  } else {
+    terminalCommand += ' && clear'
+  }
+
+  const script = `tell application "Terminal"
+    activate
+    if (count of windows) > 0 then
+      tell application "System Events" to keystroke "t" using command down
+      delay 0.3
+      do script "${terminalCommand}" in front window
+    else
+      do script "${terminalCommand}"
+    end if
+  end tell`
+
+  exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (error) => {
+    if (error) {
+      console.error('Failed to open Terminal:', error.message)
+    }
+  })
+}
+
+// Open native Terminal.app at specified path (reuses existing tab if found)
+ipcMain.handle('shell:open-terminal-at-path', async (_event, folderPath: string) => {
+  if (process.platform === 'darwin') {
+    const titlePrefix = `BA:${folderPath}`
+
+    // Try to find and focus existing tab
+    const found = await findExistingTerminalTab(titlePrefix)
+    if (found) {
+      return { action: 'focused' }
+    }
+
+    // Open new tab with title marker
+    await openNewTerminalTab(folderPath, titlePrefix)
+    return { action: 'created' }
+  }
+  return { action: 'unsupported' }
+})
+
+// Open native Terminal.app and execute command (reuses existing tab if found)
+ipcMain.handle('shell:open-terminal-with-command', async (_event, folderPath: string, command: string) => {
+  if (process.platform === 'darwin') {
+    let found = false
+
+    if (command.startsWith('happy')) {
+      // Happy CLI: search by title pattern + process cwd
+      found = await findTerminalTabByProcessCwd('Happy', 'happy', folderPath)
+    } else if (command.startsWith('claude')) {
+      // Claude CLI: search by title pattern + process cwd
+      found = await findTerminalTabByProcessCwd('Claude Code', 'claude', folderPath)
+    } else {
+      // For other commands, use title-based search
+      found = await findExistingTerminalTab(`BA:CMD:${folderPath}`)
+    }
+
+    if (found) {
+      return { action: 'focused' }
+    }
+
+    // Open new tab
+    const titlePrefix = `BA:CMD:${folderPath}`
+    await openNewTerminalTab(folderPath, titlePrefix, command)
+    return { action: 'created' }
+  }
+  return { action: 'unsupported' }
+})

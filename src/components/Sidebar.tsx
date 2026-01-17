@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
-import type { Workspace } from '../types'
+import type { Workspace, CodeAgentType } from '../types'
 import { PRESET_ROLES } from '../types'
 import { ActivityIndicator } from './ActivityIndicator'
+import { CodeAgentSelectDialog } from './CodeAgentSelectDialog'
 import { workspaceStore } from '../stores/workspace-store'
 
 interface SidebarProps {
@@ -48,6 +49,7 @@ export function Sidebar({
   const [dragOverTabId, setDragOverTabId] = useState<number | null>(null)
   const [ideMenuId, setIdeMenuId] = useState<string | null>(null)
   const [activeTabId, setActiveTabId] = useState<number>(1)
+  const [terminalAgentDialogId, setTerminalAgentDialogId] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const roleMenuRef = useRef<HTMLDivElement>(null)
   const ideMenuRef = useRef<HTMLDivElement>(null)
@@ -216,6 +218,21 @@ export function Sidebar({
   const handleOpenWithIde = (folderPath: string, appName: string) => {
     window.electronAPI.shell.openWithApp(appName, folderPath)
     setIdeMenuId(null)
+  }
+
+  const handleOpenNativeTerminal = (folderPath: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    window.electronAPI.shell.openTerminalAtPath(folderPath)
+  }
+
+  const handleTerminalAgentSelect = (folderPath: string, agentType: CodeAgentType) => {
+    const commands: Record<CodeAgentType, string> = {
+      happy: 'happy',
+      claude: 'claude',
+      'claude-chrome': 'claude --chrome'
+    }
+    window.electronAPI.shell.openTerminalWithCommand(folderPath, commands[agentType])
+    setTerminalAgentDialogId(null)
   }
 
   const handleRoleClick = (workspaceId: string, e: React.MouseEvent) => {
@@ -458,6 +475,23 @@ export function Sidebar({
                 >
                   📁
                 </button>
+                <button
+                  className="terminal-btn"
+                  onClick={(e) => handleOpenNativeTerminal(workspace.folderPath, e)}
+                  title="Open in Terminal"
+                >
+                  {'>_'}
+                </button>
+                <button
+                  className="agent-terminal-btn"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setTerminalAgentDialogId(workspace.id)
+                  }}
+                  title="Open Code Agent in Terminal"
+                >
+                  CAgent
+                </button>
                 <div className="ide-menu-container" ref={ideMenuId === workspace.id ? ideMenuRef : null}>
                   <button
                     className="ide-btn"
@@ -514,6 +548,16 @@ export function Sidebar({
           </button>
         </div>
       </div>
+
+      {terminalAgentDialogId && (() => {
+        const ws = workspaces.find(w => w.id === terminalAgentDialogId)
+        return ws ? (
+          <CodeAgentSelectDialog
+            onSelect={(type) => handleTerminalAgentSelect(ws.folderPath, type)}
+            onCancel={() => setTerminalAgentDialogId(null)}
+          />
+        ) : null
+      })()}
     </aside>
   )
 }
