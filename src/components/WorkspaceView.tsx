@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState, useRef } from 'react'
+import { useEffect, useCallback, useState, useRef, useMemo } from 'react'
 import type { Workspace, TerminalInstance, CodeAgentType } from '../types'
 import { workspaceStore } from '../stores/workspace-store'
 import { settingsStore } from '../stores/settings-store'
@@ -158,9 +158,11 @@ export function WorkspaceView({ workspace, terminals, focusedTerminalId }: Works
 
   // Determine what to show in thumbnail bar
   const mainTerminal = focusedTerminal || claudeCode
-  const thumbnailTerminals = isClaudeCodeFocused
-    ? regularTerminals
-    : (claudeCode ? [claudeCode] : [])
+  // Show all terminals except the one currently focused in the main panel
+  const thumbnailTerminals = useMemo(
+    () => terminals.filter(t => t.id !== mainTerminal?.id),
+    [terminals, mainTerminal?.id]
+  )
 
   return (
     <div className="workspace-view">
@@ -175,7 +177,7 @@ export function WorkspaceView({ workspace, terminals, focusedTerminalId }: Works
               <div className="main-panel-header">
                 <div className={`main-panel-title ${terminal.type === 'claude-code' ? 'claude-code' : ''}`}>
                   {terminal.type === 'claude-code' && <span>✦</span>}
-                  <span>{terminal.title}</span>
+                  <span>{terminal.title} - {workspace.alias || workspace.name}</span>
                 </div>
                 <div className="main-panel-actions">
                   <ActivityIndicator
@@ -213,8 +215,9 @@ export function WorkspaceView({ workspace, terminals, focusedTerminalId }: Works
         terminals={thumbnailTerminals}
         focusedTerminalId={focusedTerminalId}
         onFocus={handleFocus}
-        onAddTerminal={isClaudeCodeFocused ? handleAddTerminal : undefined}
-        showAddButton={isClaudeCodeFocused}
+        onAddTerminal={handleAddTerminal}
+        showAddButton={true}
+        workspaceName={workspace.alias || workspace.name}
       />
 
       {showCloseConfirm && (
@@ -225,11 +228,17 @@ export function WorkspaceView({ workspace, terminals, focusedTerminalId }: Works
       )}
 
       {showAgentSelect && (
-        <CodeAgentSelectDialog onSelect={handleAgentSelect} />
+        <CodeAgentSelectDialog
+          onSelect={handleAgentSelect}
+          onCancel={() => setShowAgentSelect(false)}
+        />
       )}
 
       {restartingTerminalId && (
-        <CodeAgentSelectDialog onSelect={handleRestartAgentSelect} />
+        <CodeAgentSelectDialog
+          onSelect={handleRestartAgentSelect}
+          onCancel={() => setRestartingTerminalId(null)}
+        />
       )}
     </div>
   )

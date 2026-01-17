@@ -7,6 +7,7 @@ interface ThumbnailBarProps {
   onFocus: (id: string) => void
   onAddTerminal?: () => void
   showAddButton: boolean
+  workspaceName?: string
 }
 
 export function ThumbnailBar({
@@ -14,7 +15,8 @@ export function ThumbnailBar({
   focusedTerminalId,
   onFocus,
   onAddTerminal,
-  showAddButton
+  showAddButton,
+  workspaceName
 }: ThumbnailBarProps) {
   const label = terminals.length > 0 && terminals[0].type === 'claude-code'
     ? 'Claude Code'
@@ -32,6 +34,7 @@ export function ThumbnailBar({
             terminal={terminal}
             isActive={terminal.id === focusedTerminalId}
             onClick={() => onFocus(terminal.id)}
+            workspaceName={workspaceName}
           />
         ))}
         {showAddButton && onAddTerminal && (

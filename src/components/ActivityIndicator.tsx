@@ -10,8 +10,6 @@ interface ActivityIndicatorProps {
 
 // Activity timeout in milliseconds (10 seconds)
 const ACTIVITY_TIMEOUT = 10000
-// Interval for checking inactive state (5 seconds - less frequent than before)
-const INACTIVE_CHECK_INTERVAL = 5000
 
 export function ActivityIndicator({
   lastActivityTime: propActivityTime,
@@ -69,21 +67,30 @@ export function ActivityIndicator({
     return () => unsubscribe()
   }, [checkActivity, getActivityTime])
 
-  // Only run interval when active (to detect transition to inactive)
-  // This avoids CPU usage when already inactive
+  // Use one-shot setTimeout instead of interval to reduce CPU usage
+  // Only schedule timeout when active, and only for the exact moment it should turn off
   useEffect(() => {
-    if (!isActive) return
+    if (!isActive || !lastActivityTimeRef.current) return
 
-    const interval = setInterval(() => {
+    const timeSinceActivity = Date.now() - lastActivityTimeRef.current
+    const remainingTime = ACTIVITY_TIMEOUT - timeSinceActivity + 100 // +100ms buffer
+
+    if (remainingTime <= 0) {
+      setIsActive(false)
+      return
+    }
+
+    const timeout = setTimeout(() => {
+      // Double-check the activity time hasn't been updated
       if (lastActivityTimeRef.current) {
-        const timeSinceActivity = Date.now() - lastActivityTimeRef.current
-        if (timeSinceActivity > ACTIVITY_TIMEOUT) {
+        const currentTimeSince = Date.now() - lastActivityTimeRef.current
+        if (currentTimeSince > ACTIVITY_TIMEOUT) {
           setIsActive(false)
         }
       }
-    }, INACTIVE_CHECK_INTERVAL)
+    }, remainingTime)
 
-    return () => clearInterval(interval)
+    return () => clearTimeout(timeout)
   }, [isActive])
 
   const className = `activity-indicator ${size} ${isActive ? 'active' : 'inactive'}`

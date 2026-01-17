@@ -12,6 +12,19 @@ const MIN_SIDEBAR_WIDTH = 150
 const MAX_SIDEBAR_WIDTH = 400
 const DEFAULT_SIDEBAR_WIDTH = 200
 
+// Activity throttle interval in milliseconds
+const ACTIVITY_THROTTLE = 1000
+
+// Check if output is significant (not just ANSI control codes or whitespace)
+const isSignificantOutput = (data: string): boolean => {
+  // Remove ANSI escape sequences (colors, cursor movements, etc.)
+  const stripped = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+  // Remove other control characters
+  const cleaned = stripped.replace(/[\x00-\x1f\x7f]/g, '')
+  // Check if there's any visible content
+  return cleaned.trim().length > 0
+}
+
 export default function App() {
   const [state, setState] = useState<AppState>(workspaceStore.getState())
   const [showSettings, setShowSettings] = useState(false)
@@ -22,6 +35,7 @@ export default function App() {
   })
   const isResizing = useRef(false)
   const sidebarWidthRef = useRef(sidebarWidth)
+  const lastActivityUpdateRef = useRef<Record<string, number>>({})
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -35,8 +49,18 @@ export default function App() {
 
     // Global listener for all terminal output - updates activity for ALL terminals
     // This is needed because WorkspaceView only renders terminals for the active workspace
-    const unsubscribeOutput = window.electronAPI.pty.onOutput((id) => {
-      workspaceStore.updateTerminalActivity(id)
+    // Only updates for significant output (not just ANSI codes) with throttling
+    const unsubscribeOutput = window.electronAPI.pty.onOutput((id, data) => {
+      // Only update activity for significant output (not just control codes)
+      if (!isSignificantOutput(data)) return
+
+      // Throttle: update at most once per second per terminal
+      const now = Date.now()
+      const lastUpdate = lastActivityUpdateRef.current[id] || 0
+      if (now - lastUpdate > ACTIVITY_THROTTLE) {
+        workspaceStore.updateTerminalActivity(id)
+        lastActivityUpdateRef.current[id] = now
+      }
     })
 
     // Global keyboard shortcuts for terminal/workspace switching

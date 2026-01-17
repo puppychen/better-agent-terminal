@@ -2,12 +2,13 @@ import type { CodeAgentType } from '../types'
 
 interface CodeAgentSelectDialogProps {
   onSelect: (type: CodeAgentType) => void
+  onCancel: () => void
 }
 
-export function CodeAgentSelectDialog({ onSelect }: CodeAgentSelectDialogProps) {
+export function CodeAgentSelectDialog({ onSelect, onCancel }: CodeAgentSelectDialogProps) {
   return (
-    <div className="dialog-overlay">
-      <div className="dialog code-agent-select">
+    <div className="dialog-overlay" onClick={onCancel}>
+      <div className="dialog code-agent-select" onClick={e => e.stopPropagation()}>
         <h3>Select Code Agent</h3>
         <p>Choose your AI programming assistant:</p>
 
@@ -34,6 +35,12 @@ export function CodeAgentSelectDialog({ onSelect }: CodeAgentSelectDialogProps) 
               <div className="agent-name">Claude with Chrome</div>
               <div className="agent-desc">Claude CLI with Chrome MCP integration</div>
             </div>
+          </button>
+        </div>
+
+        <div className="dialog-actions">
+          <button className="dialog-btn cancel" onClick={onCancel}>
+            Cancel
           </button>
         </div>
       </div>

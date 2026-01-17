@@ -30,9 +30,10 @@ interface TerminalThumbnailProps {
   terminal: TerminalInstance
   isActive: boolean
   onClick: () => void
+  workspaceName?: string
 }
 
-export function TerminalThumbnail({ terminal, isActive, onClick }: TerminalThumbnailProps) {
+export function TerminalThumbnail({ terminal, isActive, onClick, workspaceName }: TerminalThumbnailProps) {
   const [preview, setPreview] = useState<string>(previewCache.get(terminal.id) || '')
   const isClaudeCode = terminal.type === 'claude-code'
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -77,7 +78,7 @@ export function TerminalThumbnail({ terminal, isActive, onClick }: TerminalThumb
       <div className="thumbnail-header">
         <div className={`thumbnail-title ${isClaudeCode ? 'claude-code' : ''}`}>
           {isClaudeCode && <span>✦</span>}
-          <span>{terminal.title}</span>
+          <span>{terminal.title}{workspaceName ? ` - ${workspaceName}` : ''}</span>
         </div>
         <ActivityIndicator terminalId={terminal.id} size="small" />
       </div>

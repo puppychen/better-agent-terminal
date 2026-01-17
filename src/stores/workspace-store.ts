@@ -287,6 +287,16 @@ class WorkspaceStore {
     }
   }
 
+  clearTerminalActivity(id: string): void {
+    this.state = {
+      ...this.state,
+      terminals: this.state.terminals.map(t =>
+        t.id === id ? { ...t, lastActivityTime: undefined } : t
+      )
+    }
+    this.notifyActivity()
+  }
+
   getWorkspaceLastActivity(workspaceId: string): number | null {
     const terminals = this.getWorkspaceTerminals(workspaceId)
     const lastActivities = terminals

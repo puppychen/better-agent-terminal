@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -25,12 +25,59 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
   const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const hasNewOutputWhileHiddenRef = useRef(false)
   const lastActivityUpdateRef = useRef(0)  // For throttling activity updates
+  const userScrolledUpRef = useRef(false)  // Track if user has scrolled up from bottom
+  const lastScrollUpTimeRef = useRef(0)  // Timestamp of last scroll up action for debouncing
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
 
-  // Keep isActiveRef in sync with isActive prop (fixes closure issue in ResizeObserver)
-  useEffect(() => {
-    isActiveRef.current = isActive
-  }, [isActive])
+  // Minimum time (ms) to respect user's scroll-up intent before allowing auto-scroll
+  const SCROLL_LOCK_DURATION = 300
+
+  // Sync isActiveRef immediately (not in useEffect) to avoid timing issues
+  // This ensures onOutput callback always has the correct isActive value
+  isActiveRef.current = isActive
+
+  // Check if terminal is scrolled to the bottom
+  const isAtBottom = useCallback(() => {
+    const terminal = terminalRef.current
+    if (!terminal) return true
+
+    const buffer = terminal.buffer.active
+    const viewportTop = buffer.viewportY
+    const totalRows = buffer.length
+    const viewportRows = terminal.rows
+    const expectedTop = Math.max(0, totalRows - viewportRows)
+
+    // Allow 2 rows tolerance for "at bottom"
+    return viewportTop >= expectedTop - 2
+  }, [])
+
+  // Reliable scroll function with retry mechanism
+  const scrollToBottomReliably = useCallback((retries = 3, delay = 50) => {
+    const terminal = terminalRef.current
+    if (!terminal) return
+
+    const attemptScroll = (remainingRetries: number) => {
+      if (remainingRetries <= 0) return
+
+      terminal.scrollToBottom()
+
+      // Verify scroll succeeded
+      requestAnimationFrame(() => {
+        const buffer = terminal.buffer.active
+        const viewportTop = buffer.viewportY
+        const totalRows = buffer.length
+        const viewportRows = terminal.rows
+        const expectedTop = Math.max(0, totalRows - viewportRows)
+
+        // If scroll position is incorrect, retry
+        if (viewportTop < expectedTop - 1) {
+          setTimeout(() => attemptScroll(remainingRetries - 1), delay)
+        }
+      })
+    }
+
+    attemptScroll(retries)
+  }, [])
 
   // Handle paste with text size checking
   const handlePasteText = (text: string) => {
@@ -88,48 +135,59 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
   // Handle terminal resize and focus when becoming active
   useEffect(() => {
     if (isActive && fitAddonRef.current && terminalRef.current) {
-      // Small delay to ensure DOM is updated
+      const terminal = terminalRef.current
+      const shouldScrollToBottom = hasNewOutputWhileHiddenRef.current || !userScrolledUpRef.current
+
+      // Only scroll to bottom if there's new output or user was at bottom
+      if (shouldScrollToBottom) {
+        terminal.scrollToBottom()
+        requestAnimationFrame(() => {
+          terminalRef.current?.scrollToBottom()
+        })
+      }
+
+      // Delayed full processing
       const timeoutId = setTimeout(() => {
         if (fitAddonRef.current && terminalRef.current) {
-          const terminal = terminalRef.current
+          const term = terminalRef.current
 
-          // 1. Adjust size
+          // Adjust size
           fitAddonRef.current.fit()
-          const { cols, rows } = terminal
+          const { cols, rows } = term
           window.electronAPI.pty.resize(terminalId, cols, rows)
 
-          // 2. Only refresh visible viewport (not entire buffer) to reduce CPU usage
-          // scrollOnOutput: true handles auto-scrolling
-          const viewportRows = terminal.rows
-          const totalRows = terminal.buffer.active.length
+          // Refresh visible viewport
+          const viewportRows = term.rows
+          const totalRows = term.buffer.active.length
           const startRow = Math.max(0, totalRows - viewportRows)
-          terminal.refresh(startRow, totalRows - 1)
+          term.refresh(startRow, totalRows - 1)
 
-          // 3. Scroll to bottom and focus terminal
-          terminal.scrollToBottom()
-          terminal.focus()
-
-          // 4. If there was new output while hidden, do additional refresh after a short delay
-          if (hasNewOutputWhileHiddenRef.current) {
-            hasNewOutputWhileHiddenRef.current = false
-            setTimeout(() => {
-              if (terminalRef.current && fitAddonRef.current) {
-                fitAddonRef.current.fit()
-                const term = terminalRef.current
-                const viewportRows = term.rows
-                const totalRows = term.buffer.active.length
-                const startRow = Math.max(0, totalRows - viewportRows)
-                term.refresh(startRow, totalRows - 1)
-                term.scrollToBottom()
-              }
-            }, 50)
+          // Only scroll to bottom if there was new output while hidden or user was at bottom
+          if (shouldScrollToBottom) {
+            scrollToBottomReliably(3, 50)
           }
+
+          // Focus
+          term.focus()
         }
       }, 100)
 
-      return () => clearTimeout(timeoutId)
+      // Handle new output while hidden
+      let additionalTimeoutId: NodeJS.Timeout | null = null
+      if (hasNewOutputWhileHiddenRef.current) {
+        hasNewOutputWhileHiddenRef.current = false
+        userScrolledUpRef.current = false  // Reset scroll state when switching with new output
+        additionalTimeoutId = setTimeout(() => {
+          scrollToBottomReliably(3, 30)
+        }, 200)
+      }
+
+      return () => {
+        clearTimeout(timeoutId)
+        if (additionalTimeoutId) clearTimeout(additionalTimeoutId)
+      }
     }
-  }, [isActive, terminalId])
+  }, [isActive, terminalId, scrollToBottomReliably])
 
   // Add intersection observer to detect when terminal becomes visible
   useEffect(() => {
@@ -169,12 +227,16 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
           const { cols, rows } = term
           window.electronAPI.pty.resize(terminalId, cols, rows)
 
-          // Only refresh visible viewport and scroll to bottom
+          // Only refresh visible viewport
           const viewportRows = term.rows
           const totalRows = term.buffer.active.length
           const startRow = Math.max(0, totalRows - viewportRows)
           term.refresh(startRow, totalRows - 1)
-          term.scrollToBottom()
+
+          // Only scroll to bottom if user wasn't scrolled up
+          if (!userScrolledUpRef.current) {
+            term.scrollToBottom()
+          }
         })
       }
     })
@@ -217,7 +279,7 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
       convertEol: true,
       allowProposedApi: true,
       allowTransparency: true,
-      scrollOnOutput: true,
+      scrollOnUserInput: false,  // Don't auto-scroll on user input
       windowsMode: true
     })
 
@@ -314,23 +376,77 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
       })
     })
 
+    // Use wheel event to reliably detect user scroll intent
+    // This is more reliable than onScroll as it directly captures user action
+    const handleWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        // User scrolling up - mark as scrolled up and record timestamp
+        userScrolledUpRef.current = true
+        lastScrollUpTimeRef.current = Date.now()
+      } else if (e.deltaY > 0) {
+        // User scrolling down - check if at bottom after a short delay
+        requestAnimationFrame(() => {
+          if (isAtBottom()) {
+            userScrolledUpRef.current = false
+          }
+        })
+      }
+    }
+    const container = containerRef.current
+    container.addEventListener('wheel', handleWheel, { passive: true })
+
+    // Also track keyboard scrolling (Page Up, Page Down, Arrow keys)
+    const handleKeyScroll = (e: KeyboardEvent) => {
+      if (e.key === 'PageUp' || (e.key === 'ArrowUp' && e.shiftKey)) {
+        userScrolledUpRef.current = true
+        lastScrollUpTimeRef.current = Date.now()
+      } else if (e.key === 'PageDown' || e.key === 'End' || (e.key === 'ArrowDown' && e.shiftKey)) {
+        requestAnimationFrame(() => {
+          if (isAtBottom()) {
+            userScrolledUpRef.current = false
+          }
+        })
+      }
+    }
+    container.addEventListener('keydown', handleKeyScroll)
+
     // Handle terminal output
     const unsubscribeOutput = window.electronAPI.pty.onOutput((id, data) => {
       if (id === terminalId) {
+        // Check if user has scrolled up and we need to preserve scroll position
+        const timeSinceLastScroll = Date.now() - lastScrollUpTimeRef.current
+        const isWithinScrollLock = timeSinceLastScroll < SCROLL_LOCK_DURATION
+        const shouldPreserveScroll = userScrolledUpRef.current || isWithinScrollLock
+
+        // Save scroll position before write if user has scrolled up
+        const savedViewportY = shouldPreserveScroll ? terminal.buffer.active.viewportY : -1
+
         terminal.write(data)
-        // Ensure scroll to bottom for active terminal
-        if (isActiveRef.current) {
-          terminal.scrollToBottom()
+
+        // Restore scroll position if user had scrolled up
+        if (shouldPreserveScroll && savedViewportY >= 0) {
+          // Use scrollToLine to restore the exact position
+          terminal.scrollToLine(savedViewportY)
+        } else if (isActiveRef.current) {
+          // Auto-scroll to bottom only if user hasn't scrolled up
+          requestAnimationFrame(() => {
+            const stillWithinLock = Date.now() - lastScrollUpTimeRef.current < SCROLL_LOCK_DURATION
+            if (!userScrolledUpRef.current && !stillWithinLock) {
+              terminal.scrollToBottom()
+            }
+          })
         }
+
+        // Track if there's new output while terminal is hidden
+        if (!isActiveRef.current) {
+          hasNewOutputWhileHiddenRef.current = true
+        }
+
         // Throttle activity updates to 1 second to reduce state updates
         const now = Date.now()
         if (now - lastActivityUpdateRef.current > 1000) {
           workspaceStore.updateTerminalActivity(terminalId)
           lastActivityUpdateRef.current = now
-        }
-        // Track if there's new output while terminal is hidden
-        if (!isActiveRef.current) {
-          hasNewOutputWhileHiddenRef.current = true
         }
       }
     })
@@ -339,6 +455,8 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
     const unsubscribeExit = window.electronAPI.pty.onExit((id, exitCode) => {
       if (id === terminalId) {
         terminal.write(`\r\n\x1b[90m[Process exited with code ${exitCode}]\x1b[0m\r\n`)
+        // Clear activity so the indicator turns off immediately
+        workspaceStore.clearTerminalActivity(terminalId)
       }
     })
 
@@ -383,13 +501,15 @@ export function TerminalPanel({ terminalId, isActive = true }: TerminalPanelProp
       unsubscribeOutput()
       unsubscribeExit()
       resizeObserver.disconnect()
+      container.removeEventListener('wheel', handleWheel)
+      container.removeEventListener('keydown', handleKeyScroll)
       // Clear any pending resize timeout
       if (resizeTimeoutRef.current) {
         clearTimeout(resizeTimeoutRef.current)
       }
       terminal.dispose()
     }
-  }, [terminalId])
+  }, [terminalId, isAtBottom])
 
   return (
     <div ref={containerRef} className="terminal-panel">
