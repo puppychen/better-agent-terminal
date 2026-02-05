@@ -133,9 +133,9 @@ export function Sidebar({
 
   const handleTerminalAgentSelect = (folderPath: string, agentType: CodeAgentType) => {
     const commands: Record<CodeAgentType, string> = {
-      happy: 'happy',
-      claude: 'claude',
-      'claude-chrome': 'claude --chrome'
+      happy: 'happy -c',
+      claude: 'claude -c',
+      'claude-chrome': 'claude -c --chrome'
     }
     window.electronAPI.shell.openTerminalWithCommand(folderPath, commands[agentType])
     setTerminalAgentDialogId(null)

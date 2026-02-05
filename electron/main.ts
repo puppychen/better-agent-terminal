@@ -4,14 +4,45 @@ import path from 'path'
 let mainWindow: BrowserWindow | null = null
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
+const WINDOW_STATE_FILE = 'window-state.json'
 
-function createWindow() {
+interface WindowState {
+  x?: number
+  y?: number
+  width: number
+  height: number
+}
+
+async function loadWindowState(): Promise<WindowState | null> {
+  const fs = await import('fs/promises')
+  const configPath = path.join(app.getPath('userData'), WINDOW_STATE_FILE)
+  try {
+    const data = await fs.readFile(configPath, 'utf-8')
+    return JSON.parse(data)
+  } catch {
+    return null
+  }
+}
+
+async function saveWindowState(state: WindowState): Promise<void> {
+  const fs = await import('fs/promises')
+  const configPath = path.join(app.getPath('userData'), WINDOW_STATE_FILE)
+  await fs.writeFile(configPath, JSON.stringify(state), 'utf-8')
+}
+
+async function createWindow() {
+  const savedState = await loadWindowState()
+  const defaultWidth = 420
+  const defaultHeight = 800
+
   mainWindow = new BrowserWindow({
-    width: 380,
-    height: 700,
+    width: savedState?.width || defaultWidth,
+    height: savedState?.height || defaultHeight,
+    x: savedState?.x,
+    y: savedState?.y,
     minWidth: 300,
     minHeight: 400,
-    maxWidth: 500,
+    maxWidth: 600,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -28,6 +59,18 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
+
+  mainWindow.on('close', () => {
+    if (mainWindow) {
+      const bounds = mainWindow.getBounds()
+      saveWindowState({
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height
+      })
+    }
+  })
 
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -139,7 +182,176 @@ async function findExistingTerminalTab(pattern: string, matchMode: 'startsWith' 
   })
 }
 
-// Helper: Find Terminal tab running specific command (claude/happy) at specific path
+// Helper: Find Terminal tab by process name and cwd (does NOT rely on title)
+// This searches ALL terminal tabs and checks if the specified process is running at the target path
+async function findTerminalTabByProcess(processName: string, targetPath: string, options?: { focus?: boolean; updateTitle?: string }): Promise<boolean> {
+  const { exec } = await import('child_process')
+
+  return new Promise((resolve) => {
+    // Get ALL terminal tabs (no title filtering)
+    const script = `
+      tell application "Terminal"
+        if not running then return ""
+        set output to ""
+        repeat with w in windows
+          set winId to id of w
+          set tabCount to count of tabs of w
+          repeat with i from 1 to tabCount
+            set t to tab i of w
+            set tabTty to tty of t
+            set output to output & (winId as string) & "," & (i as string) & "," & tabTty & linefeed
+          end repeat
+        end repeat
+        return output
+      end tell
+    `
+
+    exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (error, stdout) => {
+      if (error || !stdout.trim()) {
+        resolve(false)
+        return
+      }
+
+      const tabs = stdout.trim().split('\n').filter(Boolean)
+
+      const checkNextTab = (index: number) => {
+        if (index >= tabs.length) {
+          resolve(false)
+          return
+        }
+
+        const [winId, tabIndex, tty] = tabs[index].split(',')
+        const ttyShort = tty.replace('/dev/', '')
+
+        // Check if the specified process is running at the target path
+        const cwdCmd = `ps -t ${ttyShort} -o pid,comm 2>/dev/null | grep "${processName}" | head -1 | awk '{print $1}' | xargs -I{} lsof -a -d cwd -p {} 2>/dev/null | awk 'NR==2 {print $NF}'`
+
+        exec(cwdCmd, (err, cwdOutput) => {
+          const cwd = cwdOutput?.trim()
+          if (cwd === targetPath) {
+            // Found! Optionally focus and update title
+            if (options?.focus !== false) {
+              const escapedTitle = options?.updateTitle ? options.updateTitle.replace(/"/g, '\\"') : ''
+
+              const focusScript = options?.updateTitle
+                ? `
+                tell application "Terminal"
+                  set w to window id ${winId}
+                  set frontmost of w to true
+                  set selected of tab ${tabIndex} of w to true
+                  set custom title of tab ${tabIndex} of w to "${escapedTitle}"
+                  set title displays custom title of tab ${tabIndex} of w to true
+                  set title displays shell path of tab ${tabIndex} of w to false
+                  set title displays window size of tab ${tabIndex} of w to false
+                  set title displays device name of tab ${tabIndex} of w to false
+                  set title displays file name of tab ${tabIndex} of w to false
+                  activate
+                end tell
+              `
+                : `
+                tell application "Terminal"
+                  set w to window id ${winId}
+                  set frontmost of w to true
+                  set selected of tab ${tabIndex} of w to true
+                  activate
+                end tell
+              `
+              exec(`osascript -e '${focusScript.replace(/'/g, "'\\''")}'`, () => {
+                resolve(true)
+              })
+            } else {
+              // Just check, don't focus
+              resolve(true)
+            }
+          } else {
+            checkNextTab(index + 1)
+          }
+        })
+      }
+
+      checkNextTab(0)
+    })
+  })
+}
+
+// Find Terminal tab by shell's current working directory (for pure Terminal tabs)
+async function findTerminalTabByCwd(targetPath: string): Promise<boolean> {
+  const { exec } = await import('child_process')
+
+  return new Promise((resolve) => {
+    // Get ALL terminal tabs
+    const script = `
+      tell application "Terminal"
+        if not running then return ""
+        set output to ""
+        repeat with w in windows
+          set winId to id of w
+          set tabCount to count of tabs of w
+          repeat with i from 1 to tabCount
+            set t to tab i of w
+            set tabTty to tty of t
+            set output to output & (winId as string) & "," & (i as string) & "," & tabTty & linefeed
+          end repeat
+        end repeat
+        return output
+      end tell
+    `
+
+    exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (error, stdout) => {
+      if (error || !stdout.trim()) {
+        resolve(false)
+        return
+      }
+
+      const tabs = stdout.trim().split('\n').filter(Boolean)
+
+      const checkNextTab = (index: number) => {
+        if (index >= tabs.length) {
+          resolve(false)
+          return
+        }
+
+        const [winId, tabIndex, tty] = tabs[index].split(',')
+        const ttyShort = tty.replace('/dev/', '')
+
+        // Check shell process (bash/zsh) cwd - look for shell that is NOT running claude/happy
+        const cwdCmd = `ps -t ${ttyShort} -o pid,comm 2>/dev/null | grep -E "(bash|zsh)" | head -1 | awk '{print $1}' | xargs -I{} lsof -a -d cwd -p {} 2>/dev/null | awk 'NR==2 {print $NF}'`
+
+        exec(cwdCmd, (err, cwdOutput) => {
+          const cwd = cwdOutput?.trim()
+          if (cwd === targetPath) {
+            // Also check that claude/happy is NOT running in this tab
+            const agentCheckCmd = `ps -t ${ttyShort} -o comm 2>/dev/null | grep -E "(claude|happy)" | head -1`
+            exec(agentCheckCmd, (agentErr, agentOutput) => {
+              if (!agentOutput?.trim()) {
+                // No agent running, this is a pure terminal tab - focus it
+                const focusScript = `
+                  tell application "Terminal"
+                    set w to window id ${winId}
+                    set frontmost of w to true
+                    set selected of tab ${tabIndex} of w to true
+                    activate
+                  end tell
+                `
+                exec(`osascript -e '${focusScript.replace(/'/g, "'\\''")}'`, () => {
+                  resolve(true)
+                })
+              } else {
+                checkNextTab(index + 1)
+              }
+            })
+          } else {
+            checkNextTab(index + 1)
+          }
+        })
+      }
+
+      checkNextTab(0)
+    })
+  })
+}
+
+// Legacy: Find Terminal tab by title pattern (kept for non-agent commands)
 async function findTerminalTabByProcessCwd(titlePattern: string, processName: string, targetPath: string, updateTitle?: string): Promise<boolean> {
   const { exec } = await import('child_process')
 
@@ -269,8 +481,11 @@ async function openNewTerminalTab(folderPath: string, titlePrefix: string, comma
 // Open native Terminal.app at specified path (reuses existing tab if found)
 ipcMain.handle('shell:open-terminal-at-path', async (_event, folderPath: string) => {
   if (process.platform === 'darwin') {
-    const titlePrefix = `BA:${folderPath}`
-    const found = await findExistingTerminalTab(titlePrefix)
+    const folderName = folderPath.split('/').pop() || folderPath
+    const titlePrefix = `[T] ${folderName}`
+
+    // Search by cwd instead of title (more reliable for same-named projects)
+    const found = await findTerminalTabByCwd(folderPath)
     if (found) {
       return { action: 'focused' }
     }
@@ -283,21 +498,27 @@ ipcMain.handle('shell:open-terminal-at-path', async (_event, folderPath: string)
 // Open native Terminal.app and execute command (reuses existing tab if found)
 ipcMain.handle('shell:open-terminal-with-command', async (_event, folderPath: string, command: string) => {
   if (process.platform === 'darwin') {
+    const folderName = folderPath.split('/').pop() || folderPath
     let found = false
+    let titlePrefix: string
 
-    if (command.startsWith('happy')) {
-      found = await findTerminalTabByProcessCwd('Happy', 'happy', folderPath)
-    } else if (command.startsWith('claude')) {
-      found = await findTerminalTabByProcessCwd('Claude Code', 'claude', folderPath)
+    if (command.startsWith('claude')) {
+      // Use function that doesn't rely on title (title changes when claude runs)
+      found = await findTerminalTabByProcess('claude', folderPath)
+      titlePrefix = `[C] ${folderName}`
+    } else if (command.startsWith('happy')) {
+      // Use function that doesn't rely on title (title changes when happy runs)
+      found = await findTerminalTabByProcess('happy', folderPath)
+      titlePrefix = `[H] ${folderName}`
     } else {
-      found = await findExistingTerminalTab(`BA:CMD:${folderPath}`)
+      found = await findTerminalTabByCwd(folderPath)
+      titlePrefix = `[T] ${folderName}`
     }
 
     if (found) {
       return { action: 'focused' }
     }
 
-    const titlePrefix = `BA:CMD:${folderPath}`
     await openNewTerminalTab(folderPath, titlePrefix, command)
     return { action: 'created' }
   }
@@ -307,14 +528,14 @@ ipcMain.handle('shell:open-terminal-with-command', async (_event, folderPath: st
 // Check if agent (claude/happy) is running at specified path
 ipcMain.handle('shell:check-agent-running', async (_event, folderPath: string) => {
   if (process.platform === 'darwin') {
-    // Check for Claude Code first
-    const claudeFound = await findTerminalTabByProcessCwd('Claude Code', 'claude', folderPath)
+    // Check for Claude Code first (don't rely on title, search by process)
+    const claudeFound = await findTerminalTabByProcess('claude', folderPath, { focus: false })
     if (claudeFound) {
       return { running: true, type: 'claude' }
     }
 
-    // Check for Happy
-    const happyFound = await findTerminalTabByProcessCwd('Happy', 'happy', folderPath)
+    // Check for Happy (don't rely on title, search by process)
+    const happyFound = await findTerminalTabByProcess('happy', folderPath, { focus: false })
     if (happyFound) {
       return { running: true, type: 'happy' }
     }
@@ -331,11 +552,12 @@ ipcMain.handle('shell:focus-agent', async (_event, folderPath: string, agentType
     const folderName = folderPath.split('/').pop() || folderPath
 
     if (agentType === 'claude') {
-      const title = `Claude Code: ${folderName}`
-      return await findTerminalTabByProcessCwd('Claude Code', 'claude', folderPath, title)
+      const title = `[C] ${folderName}`
+      // Use function that doesn't rely on title to find, but updates title when focusing
+      return await findTerminalTabByProcess('claude', folderPath, { focus: true, updateTitle: title })
     } else {
-      const title = `Happy: ${folderName}`
-      return await findTerminalTabByProcessCwd('Happy', 'happy', folderPath, title)
+      const title = `[H] ${folderName}`
+      return await findTerminalTabByProcess('happy', folderPath, { focus: true, updateTitle: title })
     }
   }
   return false
