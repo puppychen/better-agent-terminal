@@ -403,6 +403,9 @@ export function Sidebar({
                   </button>
                   {ideMenuId === workspace.id && (
                     <div className="ide-dropdown" onClick={(e) => e.stopPropagation()}>
+                      <button onClick={() => handleOpenWithIde(workspace.folderPath, 'IntelliJ IDEA')}>
+                        IntelliJ IDEA
+                      </button>
                       <button onClick={() => handleOpenWithIde(workspace.folderPath, 'WebStorm')}>
                         WebStorm
                       </button>
