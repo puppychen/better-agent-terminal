@@ -133,7 +133,7 @@ export function Sidebar({
 
   const handleTerminalAgentSelect = (folderPath: string, agentType: CodeAgentType) => {
     const commands: Record<CodeAgentType, string> = {
-      happy: 'happy -c',
+      happy: 'happy -c --fork-session',
       claude: 'claude -c',
       'claude-chrome': 'claude -c --chrome'
     }
