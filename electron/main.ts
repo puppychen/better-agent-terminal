@@ -1,7 +1,9 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import path from 'path'
+import { WindowTilingManager } from './window-tiling'
 
 let mainWindow: BrowserWindow | null = null
+let tilingManager: WindowTilingManager | null = null
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 const WINDOW_STATE_FILE = 'window-state.json'
@@ -73,8 +75,14 @@ async function createWindow() {
   })
 
   mainWindow.on('closed', () => {
+    if (tilingManager) {
+      tilingManager.destroy()
+      tilingManager = null
+    }
     mainWindow = null
   })
+
+  tilingManager = new WindowTilingManager(mainWindow)
 }
 
 app.whenReady().then(createWindow)
@@ -275,7 +283,7 @@ async function findTerminalTabByProcess(processName: string, targetPath: string,
 }
 
 // Find Terminal tab by shell's current working directory (for pure Terminal tabs)
-async function findTerminalTabByCwd(targetPath: string): Promise<boolean> {
+async function findTerminalTabByCwd(targetPath: string, options?: { focus?: boolean }): Promise<boolean> {
   const { exec } = await import('child_process')
 
   return new Promise((resolve) => {
@@ -324,7 +332,11 @@ async function findTerminalTabByCwd(targetPath: string): Promise<boolean> {
             const agentCheckCmd = `ps -t ${ttyShort} -o comm 2>/dev/null | grep -E "(claude|happy)" | head -1`
             exec(agentCheckCmd, (agentErr, agentOutput) => {
               if (!agentOutput?.trim()) {
-                // No agent running, this is a pure terminal tab - focus it
+                // No agent running, this is a pure terminal tab
+                if (options?.focus === false) {
+                  resolve(true)
+                  return
+                }
                 const focusScript = `
                   tell application "Terminal"
                     set w to window id ${winId}
@@ -487,9 +499,13 @@ ipcMain.handle('shell:open-terminal-at-path', async (_event, folderPath: string)
     // Search by cwd instead of title (more reliable for same-named projects)
     const found = await findTerminalTabByCwd(folderPath)
     if (found) {
+      if (tilingManager?.isEnabled()) tilingManager.syncTerminalPosition()
       return { action: 'focused' }
     }
     await openNewTerminalTab(folderPath, titlePrefix)
+    if (tilingManager?.isEnabled()) {
+      setTimeout(() => tilingManager?.syncTerminalPosition(), 500)
+    }
     return { action: 'created' }
   }
   return { action: 'unsupported' }
@@ -516,10 +532,14 @@ ipcMain.handle('shell:open-terminal-with-command', async (_event, folderPath: st
     }
 
     if (found) {
+      if (tilingManager?.isEnabled()) tilingManager.syncTerminalPosition()
       return { action: 'focused' }
     }
 
     await openNewTerminalTab(folderPath, titlePrefix, command)
+    if (tilingManager?.isEnabled()) {
+      setTimeout(() => tilingManager?.syncTerminalPosition(), 500)
+    }
     return { action: 'created' }
   }
   return { action: 'unsupported' }
@@ -545,20 +565,137 @@ ipcMain.handle('shell:check-agent-running', async (_event, folderPath: string) =
   return { running: false }
 })
 
+// Check all terminal types available at specified path
+ipcMain.handle('shell:check-terminals', async (_event, folderPath: string) => {
+  if (process.platform === 'darwin') {
+    const [claudeFound, happyFound, terminalFound] = await Promise.all([
+      findTerminalTabByProcess('claude', folderPath, { focus: false }),
+      findTerminalTabByProcess('happy', folderPath, { focus: false }),
+      findTerminalTabByCwd(folderPath, { focus: false }).catch(() => false)
+    ])
+    return {
+      claude: claudeFound,
+      happy: happyFound,
+      terminal: terminalFound
+    }
+  }
+  return { claude: false, happy: false, terminal: false }
+})
+
 // Focus existing agent tab (used when agent is already running)
 ipcMain.handle('shell:focus-agent', async (_event, folderPath: string, agentType: 'claude' | 'happy') => {
   if (process.platform === 'darwin') {
     // Extract folder name for display in title
     const folderName = folderPath.split('/').pop() || folderPath
 
+    let result: boolean
     if (agentType === 'claude') {
       const title = `[C] ${folderName}`
-      // Use function that doesn't rely on title to find, but updates title when focusing
-      return await findTerminalTabByProcess('claude', folderPath, { focus: true, updateTitle: title })
+      result = await findTerminalTabByProcess('claude', folderPath, { focus: true, updateTitle: title })
     } else {
       const title = `[H] ${folderName}`
-      return await findTerminalTabByProcess('happy', folderPath, { focus: true, updateTitle: title })
+      result = await findTerminalTabByProcess('happy', folderPath, { focus: true, updateTitle: title })
     }
+
+    if (result && tilingManager?.isEnabled()) {
+      tilingManager.syncTerminalPosition()
+    }
+    return result
   }
   return false
+})
+
+// Focus pure Terminal tab at path (non-agent)
+ipcMain.handle('shell:focus-terminal-at-path', async (_event, folderPath: string) => {
+  if (process.platform === 'darwin') {
+    const found = await findTerminalTabByCwd(folderPath)
+    if (found && tilingManager?.isEnabled()) {
+      tilingManager.syncTerminalPosition()
+    }
+    return found
+  }
+  return false
+})
+
+// Batch get all terminal tab states (for agent status polling)
+// Uses winName to extract cwd path directly — no ps+lsof needed
+ipcMain.handle('shell:get-all-terminal-states', async () => {
+  if (process.platform !== 'darwin') return []
+
+  const { exec } = await import('child_process')
+  const homedir = (await import('os')).homedir()
+
+  return new Promise<Array<{ tty: string; busy: boolean; processes: string[]; cwd?: string }>>((resolve) => {
+    // Single AppleScript: get winName (contains cwd), processes, busy
+    const script = `
+      tell application "Terminal"
+        if not running then return ""
+        set output to ""
+        repeat with w in windows
+          set winName to name of w
+          set tabCount to count of tabs of w
+          repeat with i from 1 to tabCount
+            set t to tab i of w
+            set tabTty to tty of t
+            set tabBusy to busy of t
+            set tabProcs to processes of t
+            set procStr to ""
+            repeat with p in tabProcs
+              set procStr to procStr & (p as string) & "|"
+            end repeat
+            set output to output & tabTty & "\\t" & (tabBusy as string) & "\\t" & procStr & "\\t" & winName & linefeed
+          end repeat
+        end repeat
+        return output
+      end tell
+    `
+
+    exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, { timeout: 5000 }, (error, stdout) => {
+      if (error || !stdout.trim()) {
+        resolve([])
+        return
+      }
+
+      const lines = stdout.trim().split('\n').filter(Boolean)
+      const tabs: Array<{ tty: string; busy: boolean; processes: string[]; cwd?: string }> = []
+
+      for (const line of lines) {
+        const parts = line.split('\t')
+        if (parts.length < 4) continue
+        const tty = parts[0].trim()
+        const busy = parts[1].trim() === 'true'
+        const processes = parts[2].split('|').map(p => p.trim()).filter(Boolean)
+
+        // Extract cwd from winName: "~/path/to/dir — title — processes"
+        const winName = parts.slice(3).join('\t').trim()
+        const dashIdx = winName.indexOf(' \u2014 ')
+        const rawPath = dashIdx > 0 ? winName.substring(0, dashIdx).trim() : winName.trim()
+        const cwd = rawPath.startsWith('~') ? rawPath.replace('~', homedir) : rawPath
+
+        tabs.push({ tty, busy, processes, cwd })
+      }
+
+      resolve(tabs)
+    })
+  })
+})
+
+// Tiling management
+ipcMain.handle('tiling:enable', () => {
+  tilingManager?.enable()
+  return true
+})
+
+ipcMain.handle('tiling:disable', () => {
+  tilingManager?.disable()
+  return true
+})
+
+ipcMain.handle('tiling:sync', () => {
+  tilingManager?.syncTerminalPosition()
+  return true
+})
+
+ipcMain.handle('tiling:get-status', () => {
+  return { enabled: tilingManager?.isEnabled() ?? false }
 })

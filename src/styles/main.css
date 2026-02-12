@@ -68,10 +68,18 @@ body {
 .sidebar-tabs {
   display: flex;
   border-bottom: 1px solid var(--border-color);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sidebar-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .sidebar-tab {
   flex: 1;
+  min-width: 0;
   padding: 10px 6px;
   background: transparent;
   border: none;
@@ -85,6 +93,7 @@ body {
   justify-content: center;
   gap: 4px;
   transition: all 0.15s ease;
+  white-space: nowrap;
 }
 
 .sidebar-tab:hover {
@@ -102,6 +111,42 @@ body {
   border-bottom-color: var(--accent-color);
 }
 
+.sidebar-tab.tab-add-btn {
+  flex: 0 0 auto;
+  min-width: 28px;
+  padding: 10px 8px;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  border-bottom-color: transparent;
+}
+
+.sidebar-tab.tab-add-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.tab-agent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #22c55e;
+  flex-shrink: 0;
+}
+
+.tab-rename-input {
+  width: 60px;
+  padding: 1px 3px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent-color);
+  border-radius: 2px;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  outline: none;
+  text-align: center;
+}
+
 .tab-count {
   background: var(--bg-tertiary);
   padding: 1px 5px;
@@ -114,6 +159,43 @@ body {
 .sidebar-tab.active .tab-count {
   background: var(--accent-color);
   color: white;
+}
+
+/* Tab Context Menu */
+.tab-context-menu {
+  position: fixed;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  padding: 4px 0;
+  min-width: 120px;
+}
+
+.tab-context-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.tab-context-menu button:hover {
+  background: var(--bg-hover);
+}
+
+.tab-context-menu button:disabled {
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}
+
+.tab-context-menu button:disabled:hover {
+  background: none;
 }
 
 .workspace-list {
@@ -301,6 +383,20 @@ body {
 
 .role-menu-clear:hover {
   color: var(--danger-color);
+}
+
+/* Agent Status Indicator */
+.agent-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+
+.agent-indicator.active {
+  background-color: #22c55e;
+  cursor: pointer;
 }
 
 .workspace-item-actions {
@@ -581,6 +677,115 @@ body {
 .sidebar-footer-buttons .settings-btn {
   flex: 1;
   margin-top: 0;
+}
+
+/* Tiling Button */
+.tiling-btn {
+  flex: 1;
+  margin-top: 0;
+  padding: 8px 12px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s ease;
+}
+
+.tiling-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tiling-btn.active {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: white;
+}
+
+/* Terminal Switcher */
+.terminal-switcher {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+}
+
+.terminal-switcher-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.terminal-switcher-buttons {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.terminal-switcher-btn {
+  padding: 4px 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: monospace;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+
+.terminal-switcher-btn:hover {
+  background: var(--bg-hover);
+}
+
+.terminal-switcher-btn.claude {
+  border-color: var(--claude-accent);
+  color: var(--claude-accent);
+}
+
+.terminal-switcher-btn.claude:hover {
+  background: var(--claude-accent);
+  color: white;
+}
+
+.terminal-switcher-btn.happy {
+  border-color: #10b981;
+  color: #10b981;
+}
+
+.terminal-switcher-btn.happy:hover {
+  background: #10b981;
+  color: white;
+}
+
+.terminal-switcher-btn.terminal {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+.terminal-switcher-btn.terminal:hover {
+  background: var(--accent-color);
+  color: white;
+}
+
+.terminal-switcher-refresh {
+  padding: 4px 6px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  border-radius: 4px;
+}
+
+.terminal-switcher-refresh:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 /* About Panel */

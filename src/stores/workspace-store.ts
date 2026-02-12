@@ -1,12 +1,19 @@
 import { v4 as uuidv4 } from 'uuid'
-import type { Workspace, AppState } from '../types'
+import type { Workspace, AppState, SidebarTab } from '../types'
+
+const DEFAULT_TABS: SidebarTab[] = [
+  { id: 1, name: 'Tab 1' },
+  { id: 2, name: 'Tab 2' },
+  { id: 3, name: 'Tab 3' }
+]
 
 type Listener = () => void
 
 class WorkspaceStore {
   private state: AppState = {
     workspaces: [],
-    activeWorkspaceId: null
+    activeWorkspaceId: null,
+    tabs: DEFAULT_TABS.map(t => ({ ...t }))
   }
 
   private listeners: Set<Listener> = new Set()
@@ -134,6 +141,51 @@ class WorkspaceStore {
     this.save()
   }
 
+  // Tab management
+  addTab(name?: string): SidebarTab {
+    const maxId = Math.max(...this.state.tabs.map(t => t.id), 0)
+    const newTab: SidebarTab = { id: maxId + 1, name: name || `Tab ${maxId + 1}` }
+
+    this.state = {
+      ...this.state,
+      tabs: [...this.state.tabs, newTab]
+    }
+
+    this.notify()
+    this.save()
+    return newTab
+  }
+
+  removeTab(tabId: number): void {
+    if (this.state.tabs.length <= 1) return
+
+    const firstTab = this.state.tabs.find(t => t.id !== tabId)
+    if (!firstTab) return
+
+    this.state = {
+      ...this.state,
+      tabs: this.state.tabs.filter(t => t.id !== tabId),
+      workspaces: this.state.workspaces.map(w =>
+        (w.tabId || 1) === tabId ? { ...w, tabId: firstTab.id } : w
+      )
+    }
+
+    this.notify()
+    this.save()
+  }
+
+  renameTab(tabId: number, name: string): void {
+    this.state = {
+      ...this.state,
+      tabs: this.state.tabs.map(t =>
+        t.id === tabId ? { ...t, name: name.trim() || t.name } : t
+      )
+    }
+
+    this.notify()
+    this.save()
+  }
+
   // Workspace switching (within current tab only)
   switchToNextWorkspace(): void {
     const { workspaces, activeWorkspaceId } = this.state
@@ -165,7 +217,8 @@ class WorkspaceStore {
   async save(): Promise<void> {
     const data = JSON.stringify({
       workspaces: this.state.workspaces,
-      activeWorkspaceId: this.state.activeWorkspaceId
+      activeWorkspaceId: this.state.activeWorkspaceId,
+      tabs: this.state.tabs
     })
     await window.electronAPI.workspace.save(data)
   }
@@ -176,10 +229,14 @@ class WorkspaceStore {
       try {
         const parsed = JSON.parse(data)
         const workspaces = parsed.workspaces || []
+        const tabs: SidebarTab[] = parsed.tabs && parsed.tabs.length > 0
+          ? parsed.tabs
+          : DEFAULT_TABS.map(t => ({ ...t }))
         this.state = {
           ...this.state,
           workspaces,
-          activeWorkspaceId: parsed.activeWorkspaceId || null
+          activeWorkspaceId: parsed.activeWorkspaceId || null,
+          tabs
         }
         this.notify()
       } catch (e) {

@@ -22,7 +22,13 @@ export const PRESET_ROLES = [
   { id: 'custom', name: 'Custom', color: '#dfdbc3' },
 ] as const;
 
+export interface SidebarTab {
+  id: number;
+  name: string;
+}
+
 export interface AppState {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
+  tabs: SidebarTab[];
 }

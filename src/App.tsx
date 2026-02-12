@@ -52,6 +52,7 @@ export default function App() {
         <Sidebar
           workspaces={state.workspaces}
           activeWorkspaceId={state.activeWorkspaceId}
+          tabs={state.tabs}
           onSelectWorkspace={(id) => workspaceStore.setActiveWorkspace(id)}
           onAddWorkspace={handleAddWorkspace}
           onRemoveWorkspace={(id) => workspaceStore.removeWorkspace(id)}
@@ -59,6 +60,9 @@ export default function App() {
           onSetWorkspaceRole={(id, role) => workspaceStore.setWorkspaceRole(id, role)}
           onSetWorkspaceTab={(id, tabId) => workspaceStore.setWorkspaceTab(id, tabId)}
           onReorderWorkspaces={(fromId, toId) => workspaceStore.reorderWorkspaces(fromId, toId)}
+          onAddTab={(name) => workspaceStore.addTab(name)}
+          onRemoveTab={(tabId) => workspaceStore.removeTab(tabId)}
+          onRenameTab={(tabId, name) => workspaceStore.renameTab(tabId, name)}
           onOpenAbout={() => setShowAbout(true)}
         />
         {showAbout && (
