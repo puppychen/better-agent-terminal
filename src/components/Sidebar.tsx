@@ -190,14 +190,17 @@ export function Sidebar({
     }
   }, [tabs, activeTabId])
 
-  // Agent status polling (30s interval, batch AppleScript)
-  // Checks ALL workspaces so tab-level indicators work across tabs
+  // Agent status polling — only when window is visible
+  const workspacesRef = useRef(workspaces)
+  workspacesRef.current = workspaces
+  const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   const pollAgentStatuses = useCallback(async () => {
     try {
       const terminalStates: TerminalTabState[] = await window.electronAPI.shell.getAllTerminalStates()
       const newStatuses: Record<string, AgentStatus | null> = {}
 
-      for (const ws of workspaces) {
+      for (const ws of workspacesRef.current) {
         let found: AgentStatus | null = null
         for (const ts of terminalStates) {
           if (ts.cwd === ws.folderPath) {
@@ -216,18 +219,38 @@ export function Sidebar({
     } catch {
       // Silently ignore polling errors
     }
-  }, [workspaces])
+  }, [])
 
-  useEffect(() => {
+  const startPolling = useCallback(() => {
+    if (pollingTimerRef.current) return
     pollAgentStatuses()
-    const timer = setInterval(pollAgentStatuses, 30000)
-    return () => clearInterval(timer)
+    pollingTimerRef.current = setInterval(pollAgentStatuses, 30000)
   }, [pollAgentStatuses])
 
-  // Poll immediately on tab switch
+  const stopPolling = useCallback(() => {
+    if (!pollingTimerRef.current) return
+    clearInterval(pollingTimerRef.current)
+    pollingTimerRef.current = null
+  }, [])
+
+  // Poll only when window is focused; stop when user switches to another app
   useEffect(() => {
-    pollAgentStatuses()
-  }, [activeTabId])
+    const handleFocus = () => startPolling()
+    const handleBlur = () => stopPolling()
+
+    // Start if already focused
+    if (document.hasFocus()) {
+      startPolling()
+    }
+
+    window.addEventListener('focus', handleFocus)
+    window.addEventListener('blur', handleBlur)
+    return () => {
+      window.removeEventListener('focus', handleFocus)
+      window.removeEventListener('blur', handleBlur)
+      stopPolling()
+    }
+  }, [startPolling, stopPolling])
 
   const handleToggleTiling = async () => {
     if (tilingEnabled) {
@@ -311,6 +334,8 @@ export function Sidebar({
     }
     window.electronAPI.shell.openTerminalWithCommand(folderPath, commands[agentType])
     setTerminalAgentDialogId(null)
+    // Trigger poll after delay so the new agent can be detected
+    setTimeout(pollAgentStatuses, 3000)
   }
 
   const handleRoleClick = (workspaceId: string, e: React.MouseEvent) => {
