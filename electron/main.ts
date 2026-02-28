@@ -680,6 +680,34 @@ ipcMain.handle('shell:get-all-terminal-states', async () => {
   })
 })
 
+// Git info for a single path: combine branch + dirty into 1 shell command
+async function getGitInfoForPath(folderPath: string): Promise<{ branch: string; dirty: boolean } | null> {
+  const { exec } = await import('child_process')
+  // Electron launched from Finder has minimal PATH; include common git locations
+  const gitPath = '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin'
+  return new Promise((resolve) => {
+    const cmd = `cd "${folderPath}" && echo "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" && echo "---" && git status --porcelain 2>/dev/null`
+    exec(cmd, { timeout: 5000, env: { ...process.env, PATH: `${gitPath}:${process.env.PATH || ''}` } }, (err, stdout) => {
+      if (err) { resolve(null); return }
+      const parts = stdout.split('---\n')
+      const branch = (parts[0] || '').trim()
+      if (!branch) { resolve(null); return }
+      const dirty = (parts[1] || '').trim().length > 0
+      resolve({ branch, dirty })
+    })
+  })
+}
+
+// Batch get git info for multiple paths (sequential to limit child processes)
+ipcMain.handle('shell:get-git-info-batch', async (_event, paths: string[]) => {
+  if (!paths || paths.length === 0) return {}
+  const result: Record<string, { branch: string; dirty: boolean } | null> = {}
+  for (const p of paths) {
+    result[p] = await getGitInfoForPath(p)
+  }
+  return result
+})
+
 // Tiling management
 ipcMain.handle('tiling:enable', () => {
   tilingManager?.enable()

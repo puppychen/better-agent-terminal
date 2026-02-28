@@ -14,6 +14,11 @@ interface AgentStatus {
   type: 'claude' | 'happy'
 }
 
+interface GitInfo {
+  branch: string
+  dirty: boolean
+}
+
 interface SidebarProps {
   workspaces: Workspace[]
   activeWorkspaceId: string | null
@@ -72,6 +77,7 @@ export function Sidebar({
   const [tabContextMenuId, setTabContextMenuId] = useState<number | null>(null)
   const [tabContextMenuPos, setTabContextMenuPos] = useState<{ x: number; y: number } | null>(null)
   const [agentStatuses, setAgentStatuses] = useState<Record<string, AgentStatus | null>>({})
+  const [gitInfoMap, setGitInfoMap] = useState<Record<string, GitInfo | null>>({})
   const inputRef = useRef<HTMLInputElement>(null)
   const tabInputRef = useRef<HTMLInputElement>(null)
   const roleMenuRef = useRef<HTMLDivElement>(null)
@@ -96,27 +102,17 @@ export function Sidebar({
     [workspaces, activeTabId]
   )
 
-  // Count workspaces per tab
-  const tabCounts = useMemo(() => {
+
+  // Count agents per tab
+  const tabAgentCount = useMemo(() => {
     const counts: Record<number, number> = {}
     tabs.forEach(t => { counts[t.id] = 0 })
-    workspaces.forEach(w => {
-      const tabId = w.tabId || 1
-      counts[tabId] = (counts[tabId] || 0) + 1
-    })
-    return counts
-  }, [workspaces, tabs])
-
-  // Aggregate agent status per tab: true if any workspace in the tab has an agent
-  const tabHasAgent = useMemo(() => {
-    const result: Record<number, boolean> = {}
-    tabs.forEach(t => { result[t.id] = false })
     workspaces.forEach(ws => {
       if (agentStatuses[ws.id]) {
-        result[ws.tabId || 1] = true
+        counts[ws.tabId || 1] = (counts[ws.tabId || 1] || 0) + 1
       }
     })
-    return result
+    return counts
   }, [tabs, workspaces, agentStatuses])
 
   // Load tiling status on mount
@@ -195,6 +191,18 @@ export function Sidebar({
   workspacesRef.current = workspaces
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  const pollGitInfo = useCallback(async () => {
+    try {
+      const paths = workspacesRef.current.map(ws => ws.folderPath)
+      const gitBatch = await window.electronAPI.shell.getGitInfoBatch(paths)
+      const newGitInfoMap: Record<string, GitInfo | null> = {}
+      for (const ws of workspacesRef.current) {
+        newGitInfoMap[ws.id] = gitBatch[ws.folderPath] ?? null
+      }
+      setGitInfoMap(newGitInfoMap)
+    } catch { /* silent */ }
+  }, [])
+
   const pollAgentStatuses = useCallback(async () => {
     try {
       const terminalStates: TerminalTabState[] = await window.electronAPI.shell.getAllTerminalStates()
@@ -216,10 +224,11 @@ export function Sidebar({
       }
 
       setAgentStatuses(newStatuses)
-    } catch {
-      // Silently ignore polling errors
-    }
-  }, [])
+    } catch { /* silent */ }
+
+    // Git info — independent of terminal states
+    await pollGitInfo()
+  }, [pollGitInfo])
 
   const startPolling = useCallback(() => {
     if (pollingTimerRef.current) return
@@ -232,6 +241,11 @@ export function Sidebar({
     clearInterval(pollingTimerRef.current)
     pollingTimerRef.current = null
   }, [])
+
+  // Fetch git info immediately on mount (independent of terminal polling)
+  useEffect(() => {
+    pollGitInfo()
+  }, [pollGitInfo])
 
   // Poll only when window is focused; stop when user switches to another app
   useEffect(() => {
@@ -298,6 +312,11 @@ export function Sidebar({
     if (!ws) return
     const status = await window.electronAPI.shell.checkTerminals(ws.folderPath)
     setTerminalStatus(status)
+  }
+
+  const handleOpenSourceTree = (folderPath: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    window.electronAPI.shell.openWithApp('Sourcetree', folderPath)
   }
 
   const handleOpenWithIde = (folderPath: string, appName: string) => {
@@ -522,9 +541,11 @@ export function Sidebar({
               />
             ) : (
               <>
-                {tabHasAgent[tab.id] && <span className="tab-agent-dot" />}
+                {tabAgentCount[tab.id] > 0 && <span className="tab-agent-dot" />}
                 {tab.name}
-                <span className="tab-count">{tabCounts[tab.id] || 0}</span>
+                {tabAgentCount[tab.id] > 0 && (
+                  <span className="tab-count">{tabAgentCount[tab.id]}</span>
+                )}
               </>
             )}
           </button>
@@ -605,6 +626,16 @@ export function Sidebar({
                       </span>
                     </div>
                     <span className="workspace-folder">{workspace.name}</span>
+                    {gitInfoMap[workspace.id] && (
+                      <span
+                        className={`workspace-git-badge ${gitInfoMap[workspace.id]!.dirty ? 'dirty' : ''}`}
+                        onClick={(e) => handleOpenSourceTree(workspace.folderPath, e)}
+                        title={`${gitInfoMap[workspace.id]!.branch}${gitInfoMap[workspace.id]!.dirty ? ' (未提交變更)' : ''} — 點擊開啟 SourceTree`}
+                      >
+                        ⎇ {gitInfoMap[workspace.id]!.branch}
+                        {gitInfoMap[workspace.id]!.dirty && <span className="git-dirty-dot" />}
+                      </span>
+                    )}
                   </>
                 )}
               </div>
@@ -687,6 +718,10 @@ export function Sidebar({
                   </button>
                   {ideMenuId === workspace.id && (
                     <div className="ide-dropdown" onClick={(e) => e.stopPropagation()}>
+                      <button onClick={() => handleOpenWithIde(workspace.folderPath, 'Sourcetree')}>
+                        SourceTree
+                      </button>
+                      <div className="ide-dropdown-divider" />
                       <button onClick={() => handleOpenWithIde(workspace.folderPath, 'IntelliJ IDEA')}>
                         IntelliJ IDEA
                       </button>

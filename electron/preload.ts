@@ -19,7 +19,8 @@ const electronAPI = {
     focusAgent: (path: string, agentType: 'claude' | 'happy') => ipcRenderer.invoke('shell:focus-agent', path, agentType) as Promise<boolean>,
     focusTerminalAtPath: (path: string) => ipcRenderer.invoke('shell:focus-terminal-at-path', path) as Promise<boolean>,
     checkTerminals: (path: string) => ipcRenderer.invoke('shell:check-terminals', path) as Promise<{ claude: boolean; happy: boolean; terminal: boolean }>,
-    getAllTerminalStates: () => ipcRenderer.invoke('shell:get-all-terminal-states') as Promise<Array<{ tty: string; busy: boolean; processes: string[]; cwd?: string }>>
+    getAllTerminalStates: () => ipcRenderer.invoke('shell:get-all-terminal-states') as Promise<Array<{ tty: string; busy: boolean; processes: string[]; cwd?: string }>>,
+    getGitInfoBatch: (paths: string[]) => ipcRenderer.invoke('shell:get-git-info-batch', paths) as Promise<Record<string, { branch: string; dirty: boolean } | null>>
   },
   tiling: {
     enable: () => ipcRenderer.invoke('tiling:enable') as Promise<boolean>,

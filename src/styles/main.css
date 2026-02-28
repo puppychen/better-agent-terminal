@@ -526,6 +526,55 @@ body {
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* Git Branch Badge */
+.workspace-git-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  max-width: 160px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
+.workspace-git-badge:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.workspace-item.active .workspace-git-badge {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.workspace-item.active .workspace-git-badge:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+}
+
+/* Git Dirty Dot */
+.git-dirty-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: #f59e0b;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+/* IDE Dropdown Divider */
+.ide-dropdown-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0;
+}
+
 .ide-dropdown {
   position: absolute;
   top: 100%;

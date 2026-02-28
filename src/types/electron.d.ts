@@ -19,6 +19,7 @@ interface ElectronAPI {
     focusTerminalAtPath: (path: string) => Promise<boolean>
     checkTerminals: (path: string) => Promise<{ claude: boolean; happy: boolean; terminal: boolean }>
     getAllTerminalStates: () => Promise<Array<{ tty: string; busy: boolean; processes: string[]; cwd?: string }>>
+    getGitInfoBatch: (paths: string[]) => Promise<Record<string, { branch: string; dirty: boolean } | null>>
   }
   tiling: {
     enable: () => Promise<boolean>
