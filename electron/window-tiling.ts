@@ -1,4 +1,4 @@
-import { BrowserWindow, screen } from 'electron'
+import { BrowserWindow } from 'electron'
 import { exec } from 'child_process'
 
 export class WindowTilingManager {
@@ -19,7 +19,6 @@ export class WindowTilingManager {
   enable(): void {
     if (this.enabled) return
     this.enabled = true
-    this.positionSidebar()
     this.syncTerminalPosition()
     this.startListening()
   }
@@ -34,49 +33,30 @@ export class WindowTilingManager {
     }
   }
 
-  /** Position sidebar to the left portion of the current display */
+  /** No-op: Better Agent window stays untouched */
   positionSidebar(): void {
-    const bounds = this.win.getBounds()
-    const display = screen.getDisplayMatching(bounds)
-    const workArea = display.workArea
-
-    // Sidebar takes its current width, positioned at left edge
-    const sidebarWidth = Math.min(bounds.width, Math.floor(workArea.width * 0.35))
-    this.win.setBounds({
-      x: workArea.x,
-      y: workArea.y,
-      width: sidebarWidth,
-      height: workArea.height
-    })
+    // Don't change Better Agent window position or size
   }
 
-  /** Calculate Terminal.app bounds based on current sidebar position */
-  getTerminalBounds(): { x: number; y: number; width: number; height: number } {
+  /** Calculate Terminal target position (right of Better Agent, top-aligned) */
+  getTerminalPosition(): { x: number; y: number } {
     const bounds = this.win.getBounds()
-    const display = screen.getDisplayMatching(bounds)
-    const workArea = display.workArea
-
-    const termX = bounds.x + bounds.width
-    const termWidth = workArea.x + workArea.width - termX
-
     return {
-      x: termX,
-      y: workArea.y,
-      width: Math.max(termWidth, 400),
-      height: workArea.height
+      x: bounds.x + bounds.width,
+      y: bounds.y
     }
   }
 
-  /** Use AppleScript to position Terminal.app window */
+  /** Use AppleScript to move Terminal.app window (position only, no resize) */
   syncTerminalPosition(): void {
     if (!this.enabled || process.platform !== 'darwin') return
 
-    const tb = this.getTerminalBounds()
+    const pos = this.getTerminalPosition()
     const script = `
       tell application "Terminal"
         if not running then return
         if (count of windows) = 0 then return
-        set bounds of front window to {${tb.x}, ${tb.y}, ${tb.x + tb.width}, ${tb.y + tb.height}}
+        set position of front window to {${pos.x}, ${pos.y}}
       end tell
     `
     exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (error) => {
