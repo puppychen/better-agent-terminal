@@ -626,16 +626,6 @@ export function Sidebar({
                       </span>
                     </div>
                     <span className="workspace-folder">{workspace.name}</span>
-                    {gitInfoMap[workspace.id] && (
-                      <span
-                        className={`workspace-git-badge ${gitInfoMap[workspace.id]!.dirty ? 'dirty' : ''}`}
-                        onClick={(e) => handleOpenSourceTree(workspace.folderPath, e)}
-                        title={`${gitInfoMap[workspace.id]!.branch}${gitInfoMap[workspace.id]!.dirty ? ' (未提交變更)' : ''} — 點擊開啟 SourceTree`}
-                      >
-                        ⎇ {gitInfoMap[workspace.id]!.branch}
-                        {gitInfoMap[workspace.id]!.dirty && <span className="git-dirty-dot" />}
-                      </span>
-                    )}
                   </>
                 )}
               </div>
@@ -751,6 +741,18 @@ export function Sidebar({
                 </button>
               </div>
               </div>
+              {gitInfoMap[workspace.id] && (
+                <div className="workspace-git-row">
+                  <span
+                    className={`workspace-git-badge ${gitInfoMap[workspace.id]!.dirty ? 'dirty' : ''}`}
+                    onClick={(e) => handleOpenSourceTree(workspace.folderPath, e)}
+                    title={`${gitInfoMap[workspace.id]!.branch}${gitInfoMap[workspace.id]!.dirty ? ' (未提交變更)' : ''} — 點擊開啟 SourceTree`}
+                  >
+                    ⎇ {gitInfoMap[workspace.id]!.branch}
+                    {gitInfoMap[workspace.id]!.dirty && <span className="git-dirty-dot" />}
+                  </span>
+                </div>
+              )}
             </div>
           )
         )}

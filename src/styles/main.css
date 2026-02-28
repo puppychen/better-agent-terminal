@@ -211,6 +211,8 @@ body {
   cursor: pointer;
   font-size: 13px;
   margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
 }
 
 .workspace-item-content {
@@ -526,21 +528,31 @@ body {
   background: rgba(255, 255, 255, 0.1);
 }
 
-/* Git Branch Badge */
+/* Git Branch Row — layout only, click passthrough to workspace-item */
+.workspace-git-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2px;
+  pointer-events: none;
+}
+
+/* Git Branch Badge — clickable, aligned with action buttons above */
 .workspace-git-badge {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 3px;
   font-size: 10px;
-  padding: 3px 8px;
-  border-radius: 8px;
+  padding: 3px 6px;
+  border-radius: 6px;
   color: var(--text-secondary);
   cursor: pointer;
-  max-width: 160px;
-  overflow: hidden;
+  pointer-events: auto;
   white-space: nowrap;
+  overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: 1px;
+  /* Match left edge of workspace-item-actions (📁) above */
+  width: calc(60%);
 }
 
 .workspace-git-badge:hover {
