@@ -38,12 +38,15 @@ export class WindowTilingManager {
     // Don't change Better Agent window position or size
   }
 
-  /** Calculate Terminal target position (right of Better Agent, top-aligned) */
+  /** Calculate Terminal target position (right of Better Agent, below tab bar) */
   getTerminalPosition(): { x: number; y: number } {
     const bounds = this.win.getBounds()
+    // Offset Y to align Terminal top with bottom of sidebar tab bar
+    // macOS title bar (~28px) + sidebar-tabs (~33px: padding 10*2 + font 11 + border 2)
+    const TAB_BAR_OFFSET = 61
     return {
       x: bounds.x + bounds.width,
-      y: bounds.y
+      y: bounds.y + TAB_BAR_OFFSET
     }
   }
 
