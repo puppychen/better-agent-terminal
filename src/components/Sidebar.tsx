@@ -194,6 +194,18 @@ export function Sidebar({
     }
   }, [tabs, activeTabId])
 
+  // Auto-switch tab only when activeWorkspaceId actually changes (e.g. "go to existing" action)
+  const prevActiveWorkspaceId = useRef(activeWorkspaceId)
+  useEffect(() => {
+    if (activeWorkspaceId && activeWorkspaceId !== prevActiveWorkspaceId.current) {
+      const ws = workspaces.find(w => w.id === activeWorkspaceId)
+      if (ws) {
+        setActiveTabId(ws.tabId || 1)
+      }
+    }
+    prevActiveWorkspaceId.current = activeWorkspaceId
+  }, [activeWorkspaceId, workspaces])
+
   // Agent status polling — only when window is visible
   const workspacesRef = useRef(workspaces)
   workspacesRef.current = workspaces
