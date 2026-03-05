@@ -7,6 +7,8 @@ export class WindowTilingManager {
   private syncTimer: ReturnType<typeof setTimeout> | null = null
   private moveHandler: (() => void) | null = null
   private resizeHandler: (() => void) | null = null
+  private focusHandler: (() => void) | null = null
+  private raiseTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(win: BrowserWindow) {
     this.win = win
@@ -20,6 +22,7 @@ export class WindowTilingManager {
     if (this.enabled) return
     this.enabled = true
     this.syncTerminalPosition()
+    this.raiseTerminalWindow()
     this.startListening()
   }
 
@@ -30,6 +33,10 @@ export class WindowTilingManager {
     if (this.syncTimer) {
       clearTimeout(this.syncTimer)
       this.syncTimer = null
+    }
+    if (this.raiseTimer) {
+      clearTimeout(this.raiseTimer)
+      this.raiseTimer = null
     }
   }
 
@@ -69,6 +76,38 @@ export class WindowTilingManager {
     })
   }
 
+  /** Raise Terminal.app window to foreground without stealing keyboard focus */
+  raiseTerminalWindow(): void {
+    if (!this.enabled || process.platform !== 'darwin') return
+
+    const script = `
+      tell application "Terminal"
+        if not running then return
+        if (count of windows) = 0 then return
+        set miniaturized of front window to false
+      end tell
+      tell application "System Events"
+        tell process "Terminal"
+          if (count of windows) > 0 then
+            perform action "AXRaise" of window 1
+          end if
+        end tell
+      end tell
+    `
+    exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (error) => {
+      if (error) {
+        console.warn('raiseTerminalWindow failed:', error.message)
+      }
+    })
+  }
+
+  private debouncedRaise = (): void => {
+    if (this.raiseTimer) clearTimeout(this.raiseTimer)
+    this.raiseTimer = setTimeout(() => {
+      this.raiseTerminalWindow()
+    }, 100)
+  }
+
   private debouncedSync = (): void => {
     if (this.syncTimer) clearTimeout(this.syncTimer)
     this.syncTimer = setTimeout(() => {
@@ -79,8 +118,10 @@ export class WindowTilingManager {
   private startListening(): void {
     this.moveHandler = this.debouncedSync
     this.resizeHandler = this.debouncedSync
+    this.focusHandler = this.debouncedRaise
     this.win.on('move', this.moveHandler)
     this.win.on('resize', this.resizeHandler)
+    this.win.on('focus', this.focusHandler)
   }
 
   private stopListening(): void {
@@ -91,6 +132,10 @@ export class WindowTilingManager {
     if (this.resizeHandler) {
       this.win.removeListener('resize', this.resizeHandler)
       this.resizeHandler = null
+    }
+    if (this.focusHandler) {
+      this.win.removeListener('focus', this.focusHandler)
+      this.focusHandler = null
     }
   }
 
