@@ -20,7 +20,8 @@ const electronAPI = {
     focusTerminalAtPath: (path: string) => ipcRenderer.invoke('shell:focus-terminal-at-path', path) as Promise<boolean>,
     checkTerminals: (path: string) => ipcRenderer.invoke('shell:check-terminals', path) as Promise<{ claude: boolean; happy: boolean; terminal: boolean }>,
     getAllTerminalStates: () => ipcRenderer.invoke('shell:get-all-terminal-states') as Promise<Array<{ tty: string; busy: boolean; processes: string[]; cwd?: string }>>,
-    getGitInfoBatch: (paths: string[]) => ipcRenderer.invoke('shell:get-git-info-batch', paths) as Promise<Record<string, { branch: string; dirty: boolean } | null>>
+    getGitInfoBatch: (paths: string[]) => ipcRenderer.invoke('shell:get-git-info-batch', paths) as Promise<Record<string, { branch: string; dirty: boolean } | null>>,
+    getSubReposBatch: (paths: string[]) => ipcRenderer.invoke('shell:get-sub-repos-batch', paths) as Promise<Record<string, Array<{ name: string; path: string; branch: string; dirty: boolean }>>>
   },
   tiling: {
     enable: () => ipcRenderer.invoke('tiling:enable') as Promise<boolean>,

@@ -19,6 +19,13 @@ interface GitInfo {
   dirty: boolean
 }
 
+interface SubRepoInfo {
+  name: string
+  path: string
+  branch: string
+  dirty: boolean
+}
+
 interface SidebarProps {
   workspaces: Workspace[]
   activeWorkspaceId: string | null
@@ -78,6 +85,7 @@ export function Sidebar({
   const [tabContextMenuPos, setTabContextMenuPos] = useState<{ x: number; y: number } | null>(null)
   const [agentStatuses, setAgentStatuses] = useState<Record<string, AgentStatus | null>>({})
   const [gitInfoMap, setGitInfoMap] = useState<Record<string, GitInfo | null>>({})
+  const [subRepoMap, setSubRepoMap] = useState<Record<string, SubRepoInfo[]>>({})
   const inputRef = useRef<HTMLInputElement>(null)
   const tabInputRef = useRef<HTMLInputElement>(null)
   const roleMenuRef = useRef<HTMLDivElement>(null)
@@ -190,16 +198,41 @@ export function Sidebar({
   const workspacesRef = useRef(workspaces)
   workspacesRef.current = workspaces
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const emptySubRepoPaths = useRef<Set<string>>(new Set())
 
   const pollGitInfo = useCallback(async () => {
     try {
       const paths = workspacesRef.current.map(ws => ws.folderPath)
       const gitBatch = await window.electronAPI.shell.getGitInfoBatch(paths)
       const newGitInfoMap: Record<string, GitInfo | null> = {}
+      const pathsNeedSubScan: string[] = []
+
       for (const ws of workspacesRef.current) {
-        newGitInfoMap[ws.id] = gitBatch[ws.folderPath] ?? null
+        const info = gitBatch[ws.folderPath] ?? null
+        newGitInfoMap[ws.id] = info
+        if (!info && !emptySubRepoPaths.current.has(ws.folderPath)) {
+          pathsNeedSubScan.push(ws.folderPath)
+        }
       }
       setGitInfoMap(newGitInfoMap)
+
+      if (pathsNeedSubScan.length > 0) {
+        const subBatch = await window.electronAPI.shell.getSubReposBatch(pathsNeedSubScan)
+        setSubRepoMap(prev => {
+          const next = { ...prev }
+          for (const ws of workspacesRef.current) {
+            const repos = subBatch[ws.folderPath]
+            if (repos !== undefined) {
+              if (repos.length === 0) {
+                emptySubRepoPaths.current.add(ws.folderPath)
+              } else {
+                next[ws.id] = repos
+              }
+            }
+          }
+          return next
+        })
+      }
     } catch { /* silent */ }
   }, [])
 
@@ -751,6 +784,21 @@ export function Sidebar({
                     ⎇ {gitInfoMap[workspace.id]!.branch}
                     {gitInfoMap[workspace.id]!.dirty && <span className="git-dirty-dot" />}
                   </span>
+                </div>
+              )}
+              {!gitInfoMap[workspace.id] && subRepoMap[workspace.id]?.length > 0 && (
+                <div className="workspace-git-row">
+                  {subRepoMap[workspace.id].map(repo => (
+                    <span
+                      key={repo.path}
+                      className={`workspace-git-badge ${repo.dirty ? 'dirty' : ''}`}
+                      onClick={(e) => handleOpenSourceTree(repo.path, e)}
+                      title={`${repo.name}: ${repo.branch}${repo.dirty ? ' (未提交變更)' : ''} — 點擊開啟 SourceTree`}
+                    >
+                      ⎇ {repo.name}/{repo.branch}
+                      {repo.dirty && <span className="git-dirty-dot" />}
+                    </span>
+                  ))}
                 </div>
               )}
             </div>

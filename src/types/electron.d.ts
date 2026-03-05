@@ -1,5 +1,12 @@
 import type { CodeAgentType } from './index'
 
+interface SubRepoInfo {
+  name: string
+  path: string
+  branch: string
+  dirty: boolean
+}
+
 interface ElectronAPI {
   workspace: {
     save: (data: string) => Promise<boolean>
@@ -20,6 +27,7 @@ interface ElectronAPI {
     checkTerminals: (path: string) => Promise<{ claude: boolean; happy: boolean; terminal: boolean }>
     getAllTerminalStates: () => Promise<Array<{ tty: string; busy: boolean; processes: string[]; cwd?: string }>>
     getGitInfoBatch: (paths: string[]) => Promise<Record<string, { branch: string; dirty: boolean } | null>>
+    getSubReposBatch: (paths: string[]) => Promise<Record<string, SubRepoInfo[]>>
   }
   tiling: {
     enable: () => Promise<boolean>

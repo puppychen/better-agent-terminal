@@ -680,6 +680,45 @@ ipcMain.handle('shell:get-all-terminal-states', async () => {
   })
 })
 
+// Sub-repo scanning: find child directories that are independent git repos
+interface SubRepoInfo {
+  name: string
+  path: string
+  branch: string
+  dirty: boolean
+}
+
+async function getSubReposForPath(folderPath: string): Promise<SubRepoInfo[]> {
+  const { exec } = await import('child_process')
+  const gitPath = '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin'
+  return new Promise((resolve) => {
+    const cmd = `for d in "${folderPath}"/*/; do
+      if [ -d "$d/.git" ]; then
+        name=$(basename "$d")
+        branch=$(cd "$d" && git rev-parse --abbrev-ref HEAD 2>/dev/null)
+        if [ -n "$(cd "$d" && git status --porcelain 2>/dev/null)" ]; then dirty="true"; else dirty="false"; fi
+        echo "$name|||$d|||$branch|||$dirty"
+      fi
+    done`
+    exec(cmd, { timeout: 10000, env: { ...process.env, PATH: `${gitPath}:${process.env.PATH || ''}` } }, (err, stdout) => {
+      if (err || !stdout.trim()) { resolve([]); return }
+      const repos: SubRepoInfo[] = []
+      for (const line of stdout.trim().split('\n')) {
+        const [name, repoPath, branch, dirty] = line.split('|||')
+        if (name && branch) {
+          repos.push({
+            name,
+            path: repoPath.replace(/\/$/, ''),
+            branch,
+            dirty: dirty === 'true'
+          })
+        }
+      }
+      resolve(repos)
+    })
+  })
+}
+
 // Git info for a single path: combine branch + dirty into 1 shell command
 async function getGitInfoForPath(folderPath: string): Promise<{ branch: string; dirty: boolean } | null> {
   const { exec } = await import('child_process')
@@ -704,6 +743,16 @@ ipcMain.handle('shell:get-git-info-batch', async (_event, paths: string[]) => {
   const result: Record<string, { branch: string; dirty: boolean } | null> = {}
   for (const p of paths) {
     result[p] = await getGitInfoForPath(p)
+  }
+  return result
+})
+
+// Batch get sub-repos for multiple paths
+ipcMain.handle('shell:get-sub-repos-batch', async (_event, paths: string[]) => {
+  if (!paths || paths.length === 0) return {}
+  const result: Record<string, SubRepoInfo[]> = {}
+  for (const p of paths) {
+    result[p] = await getSubReposForPath(p)
   }
   return result
 })

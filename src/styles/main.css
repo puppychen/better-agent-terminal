@@ -531,7 +531,9 @@ body {
 /* Git Branch Row — layout only, click passthrough to workspace-item */
 .workspace-git-row {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: 3px;
   margin-top: 2px;
   pointer-events: none;
 }
