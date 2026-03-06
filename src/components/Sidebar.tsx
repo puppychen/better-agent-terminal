@@ -793,8 +793,8 @@ export function Sidebar({
                     onClick={(e) => handleOpenSourceTree(workspace.folderPath, e)}
                     title={`${gitInfoMap[workspace.id]!.branch}${gitInfoMap[workspace.id]!.dirty ? ' (未提交變更)' : ''} — 點擊開啟 SourceTree`}
                   >
-                    ⎇ {gitInfoMap[workspace.id]!.branch}
                     {gitInfoMap[workspace.id]!.dirty && <span className="git-dirty-dot" />}
+                    ⎇ {gitInfoMap[workspace.id]!.branch}
                   </span>
                 </div>
               )}
@@ -807,8 +807,8 @@ export function Sidebar({
                       onClick={(e) => handleOpenSourceTree(repo.path, e)}
                       title={`${repo.name}: ${repo.branch}${repo.dirty ? ' (未提交變更)' : ''} — 點擊開啟 SourceTree`}
                     >
-                      ⎇ {repo.name}/{repo.branch}
                       {repo.dirty && <span className="git-dirty-dot" />}
+                      ⎇ {repo.name}/{repo.branch}
                     </span>
                   ))}
                 </div>
