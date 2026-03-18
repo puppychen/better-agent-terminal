@@ -62,7 +62,8 @@ export class WindowTilingManager {
     if (!this.enabled || process.platform !== 'darwin') return
 
     const pos = this.getTerminalPosition()
-    const CASCADE_OFFSET = 28 // macOS title bar height — keeps each title bar visible & clickable
+    const CASCADE_X = 56  // horizontal offset per window
+    const CASCADE_Y = 56  // vertical offset per window
     const script = `
       tell application "Terminal"
         if not running then return
@@ -70,7 +71,7 @@ export class WindowTilingManager {
         set idx to 0
         repeat with w in windows
           if visible of w is true and miniaturized of w is false then
-            set position of w to {${pos.x}, ${pos.y} + idx * ${CASCADE_OFFSET}}
+            set position of w to {${pos.x} + idx * ${CASCADE_X}, ${pos.y} + idx * ${CASCADE_Y}}
             set idx to idx + 1
           end if
         end repeat
