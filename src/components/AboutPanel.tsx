@@ -18,7 +18,7 @@ export function AboutPanel({ onClose }: AboutPanelProps) {
         <div className="settings-content about-content">
           <div className="about-logo">
             <span className="about-icon">⬛</span>
-            <h1>Better Agent Terminal</h1>
+            <h1>Better Agent Workspace</h1>
           </div>
 
           <p className="about-description">
@@ -37,10 +37,10 @@ export function AboutPanel({ onClose }: AboutPanelProps) {
                 className="about-link"
                 onClick={(e) => {
                   e.preventDefault()
-                  handleLinkClick('https://github.com/tony1223/better-agent-terminal')
+                  handleLinkClick('https://github.com/tony1223/better-agent-workspace')
                 }}
               >
-                github.com/tony1223/better-agent-terminal
+                github.com/tony1223/better-agent-workspace
               </a>
             </div>
           </div>

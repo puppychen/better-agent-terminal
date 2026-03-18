@@ -40,9 +40,9 @@ export class WindowTilingManager {
     }
   }
 
-  /** No-op: Better Agent window stays untouched */
+  /** No-op: Better Agent Workspace window stays untouched */
   positionSidebar(): void {
-    // Don't change Better Agent window position or size
+    // Don't change Better Agent Workspace window position or size
   }
 
   /** Calculate Terminal target position (right of Better Agent, below tab bar) */
@@ -57,16 +57,23 @@ export class WindowTilingManager {
     }
   }
 
-  /** Use AppleScript to move Terminal.app window (position only, no resize) */
+  /** Use AppleScript to cascade all visible Terminal.app windows (position only, no resize) */
   syncTerminalPosition(): void {
     if (!this.enabled || process.platform !== 'darwin') return
 
     const pos = this.getTerminalPosition()
+    const CASCADE_OFFSET = 28 // macOS title bar height — keeps each title bar visible & clickable
     const script = `
       tell application "Terminal"
         if not running then return
         if (count of windows) = 0 then return
-        set position of front window to {${pos.x}, ${pos.y}}
+        set idx to 0
+        repeat with w in windows
+          if visible of w is true and miniaturized of w is false then
+            set position of w to {${pos.x}, ${pos.y} + idx * ${CASCADE_OFFSET}}
+            set idx to idx + 1
+          end if
+        end repeat
       end tell
     `
     exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (error) => {
@@ -76,7 +83,7 @@ export class WindowTilingManager {
     })
   }
 
-  /** Raise Terminal.app window to foreground without stealing keyboard focus */
+  /** Raise all visible Terminal.app windows (reverse order so first window ends on top) */
   raiseTerminalWindow(): void {
     if (!this.enabled || process.platform !== 'darwin') return
 
@@ -84,13 +91,18 @@ export class WindowTilingManager {
       tell application "Terminal"
         if not running then return
         if (count of windows) = 0 then return
-        set miniaturized of front window to false
+        repeat with w in windows
+          if visible of w is true then
+            set miniaturized of w to false
+          end if
+        end repeat
       end tell
       tell application "System Events"
         tell process "Terminal"
-          if (count of windows) > 0 then
-            perform action "AXRaise" of window 1
-          end if
+          if (count of windows) = 0 then return
+          repeat with i from (count of windows) to 1 by -1
+            perform action "AXRaise" of window i
+          end repeat
         end tell
       end tell
     `

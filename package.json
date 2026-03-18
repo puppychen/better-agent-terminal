@@ -1,7 +1,7 @@
 {
-  "name": "better-agent-terminal",
+  "name": "better-agent-workspace",
   "version": "1.26.0102183304",
-  "description": "Windows terminal aggregator with multi-workspace support and Claude Code integration",
+  "description": "Workspace tool aggregator with multi-workspace support and Claude Code integration",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -39,8 +39,8 @@
     "vite-plugin-electron-renderer": "^0.14.5"
   },
   "build": {
-    "appId": "org.tonyq.better-agent-terminal",
-    "productName": "Better Agent Terminal",
+    "appId": "org.tonyq.better-agent-workspace",
+    "productName": "Better Agent Workspace",
     "directories": {
       "output": "release"
     },

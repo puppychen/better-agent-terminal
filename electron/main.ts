@@ -1,6 +1,24 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import path from 'path'
+import fs from 'fs'
 import { WindowTilingManager } from './window-tiling'
+
+// userData migration: Better Agent Terminal → Better Agent Workspace
+// Dev mode uses package.json "name" (lowercase), production uses "productName" (title case)
+const newUserDataDir = app.getPath('userData')
+const appDataDir = app.getPath('appData')
+const oldUserDataCandidates = [
+  path.join(appDataDir, 'Better Agent Terminal'),  // production build
+  path.join(appDataDir, 'better-agent-terminal'),  // dev mode
+]
+if (!fs.existsSync(newUserDataDir)) {
+  for (const oldDir of oldUserDataCandidates) {
+    if (oldDir !== newUserDataDir && fs.existsSync(oldDir)) {
+      fs.cpSync(oldDir, newUserDataDir, { recursive: true })
+      break
+    }
+  }
+}
 
 let mainWindow: BrowserWindow | null = null
 let tilingManager: WindowTilingManager | null = null
@@ -52,7 +70,7 @@ async function createWindow() {
     },
     frame: true,
     titleBarStyle: 'default',
-    title: 'Better Agent'
+    title: 'Better Agent Workspace'
   })
 
   if (VITE_DEV_SERVER_URL) {
