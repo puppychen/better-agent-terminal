@@ -127,14 +127,15 @@ ipcMain.handle('dialog:select-folder', async () => {
 
 ipcMain.handle('workspace:save', async (_event, data: string) => {
   const fs = await import('fs/promises')
-  const configPath = path.join(app.getPath('userData'), 'workspaces.json')
+  const configPath = path.join(app.getPath('appData'), 'better-agent-terminal', 'workspaces.json')
+  await fs.mkdir(path.dirname(configPath), { recursive: true })
   await fs.writeFile(configPath, data, 'utf-8')
   return true
 })
 
 ipcMain.handle('workspace:load', async () => {
   const fs = await import('fs/promises')
-  const configPath = path.join(app.getPath('userData'), 'workspaces.json')
+  const configPath = path.join(app.getPath('appData'), 'better-agent-terminal', 'workspaces.json')
   try {
     const data = await fs.readFile(configPath, 'utf-8')
     return data

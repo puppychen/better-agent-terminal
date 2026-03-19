@@ -1,7 +1,7 @@
 interface DuplicateWorkspaceDialogProps {
   folderPath: string
   existingName: string
-  existingTabName: string
+  existingGroupName: string
   onGoToExisting: () => void
   onAddAnyway: () => void
   onCancel: () => void
@@ -10,7 +10,7 @@ interface DuplicateWorkspaceDialogProps {
 export function DuplicateWorkspaceDialog({
   folderPath,
   existingName,
-  existingTabName,
+  existingGroupName,
   onGoToExisting,
   onAddAnyway,
   onCancel
@@ -24,7 +24,7 @@ export function DuplicateWorkspaceDialog({
         <div className="dialog-body">
           <p className="duplicate-dialog-path">{folderPath}</p>
           <p className="duplicate-dialog-info">
-            已存在於 <strong>{existingTabName}</strong> 分頁，名稱為 <strong>{existingName}</strong>
+            已存在於 <strong>{existingGroupName}</strong> 群組，名稱為 <strong>{existingName}</strong>
           </p>
         </div>
         <div className="dialog-footer">

@@ -8,7 +8,8 @@ export interface Workspace {
   role?: string;
   folderPath: string;
   createdAt: number;
-  tabId?: number;  // 1, 2, or 3. Default to 1 if undefined
+  group?: string;
+  claudeSessionId?: string;
 }
 
 // Preset roles for quick selection
@@ -22,13 +23,7 @@ export const PRESET_ROLES = [
   { id: 'custom', name: 'Custom', color: '#dfdbc3' },
 ] as const;
 
-export interface SidebarTab {
-  id: number;
-  name: string;
-}
-
 export interface AppState {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
-  tabs: SidebarTab[];
 }

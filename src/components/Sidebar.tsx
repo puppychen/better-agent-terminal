@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
-import type { Workspace, CodeAgentType, SidebarTab } from '../types'
+import type { Workspace, CodeAgentType } from '../types'
 import { PRESET_ROLES } from '../types'
 import { CodeAgentSelectDialog } from './CodeAgentSelectDialog'
 
@@ -29,17 +29,17 @@ interface SubRepoInfo {
 interface SidebarProps {
   workspaces: Workspace[]
   activeWorkspaceId: string | null
-  tabs: SidebarTab[]
+  groups: string[]
   onSelectWorkspace: (id: string) => void
   onAddWorkspace: () => void
   onRemoveWorkspace: (id: string) => void
   onRenameWorkspace: (id: string, alias: string) => void
   onSetWorkspaceRole: (id: string, role: string) => void
-  onSetWorkspaceTab: (id: string, tabId: number) => void
+  onSetWorkspaceGroup: (id: string, group: string) => void
   onReorderWorkspaces: (fromId: string, toId: string) => void
-  onAddTab: (name?: string) => void
-  onRemoveTab: (tabId: number) => void
-  onRenameTab: (tabId: number, name: string) => void
+  onAddGroup: (name?: string) => void
+  onRemoveGroup: (group: string) => void
+  onRenameGroup: (oldName: string, newName: string) => void
   onOpenAbout: () => void
   width?: number
 }
@@ -53,17 +53,17 @@ function getRoleColor(role?: string): string {
 export function Sidebar({
   workspaces,
   activeWorkspaceId,
-  tabs,
+  groups,
   onSelectWorkspace,
   onAddWorkspace,
   onRemoveWorkspace,
   onRenameWorkspace,
   onSetWorkspaceRole,
-  onSetWorkspaceTab,
+  onSetWorkspaceGroup,
   onReorderWorkspaces,
-  onAddTab,
-  onRemoveTab,
-  onRenameTab,
+  onAddGroup,
+  onRemoveGroup,
+  onRenameGroup,
   onOpenAbout,
   width
 }: SidebarProps) {
@@ -73,16 +73,16 @@ export function Sidebar({
   const [customRoleInput, setCustomRoleInput] = useState('')
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
-  const [dragOverTabId, setDragOverTabId] = useState<number | null>(null)
+  const [dragOverGroup, setDragOverGroup] = useState<string | null>(null)
   const [ideMenuId, setIdeMenuId] = useState<string | null>(null)
-  const [activeTabId, setActiveTabId] = useState<number>(1)
+  const [activeGroup, setActiveGroup] = useState<string>(groups[0] || 'Others')
   const [terminalAgentDialogId, setTerminalAgentDialogId] = useState<string | null>(null)
   const [tilingEnabled, setTilingEnabled] = useState(false)
   const [terminalStatus, setTerminalStatus] = useState<{ claude: boolean; happy: boolean; terminal: boolean } | null>(null)
-  const [editingTabId, setEditingTabId] = useState<number | null>(null)
+  const [editingGroup, setEditingGroup] = useState<string | null>(null)
   const [editTabValue, setEditTabValue] = useState('')
-  const [tabContextMenuId, setTabContextMenuId] = useState<number | null>(null)
-  const [tabContextMenuPos, setTabContextMenuPos] = useState<{ x: number; y: number } | null>(null)
+  const [groupContextMenu, setGroupContextMenu] = useState<string | null>(null)
+  const [groupContextMenuPos, setGroupContextMenuPos] = useState<{ x: number; y: number } | null>(null)
   const [agentStatuses, setAgentStatuses] = useState<Record<string, AgentStatus | null>>({})
   const [gitInfoMap, setGitInfoMap] = useState<Record<string, GitInfo | null>>({})
   const [subRepoMap, setSubRepoMap] = useState<Record<string, SubRepoInfo[]>>({})
@@ -104,24 +104,24 @@ export function Sidebar({
     return colors
   }, [workspaces])
 
-  // Filter workspaces by active tab
+  // Filter workspaces by active group
   const filteredWorkspaces = useMemo(() =>
-    workspaces.filter(w => (w.tabId || 1) === activeTabId),
-    [workspaces, activeTabId]
+    workspaces.filter(w => (w.group || 'Others') === activeGroup),
+    [workspaces, activeGroup]
   )
 
-
-  // Count agents per tab
-  const tabAgentCount = useMemo(() => {
-    const counts: Record<number, number> = {}
-    tabs.forEach(t => { counts[t.id] = 0 })
+  // Count agents per group
+  const groupAgentCount = useMemo(() => {
+    const counts: Record<string, number> = {}
+    groups.forEach(g => { counts[g] = 0 })
     workspaces.forEach(ws => {
       if (agentStatuses[ws.id]) {
-        counts[ws.tabId || 1] = (counts[ws.tabId || 1] || 0) + 1
+        const g = ws.group || 'Others'
+        counts[g] = (counts[g] || 0) + 1
       }
     })
     return counts
-  }, [tabs, workspaces, agentStatuses])
+  }, [groups, workspaces, agentStatuses])
 
   // Load tiling status on mount
   useEffect(() => {
@@ -168,39 +168,39 @@ export function Sidebar({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [roleMenuId, ideMenuId])
 
-  // Focus tab rename input when editing
+  // Focus group rename input when editing
   useEffect(() => {
-    if (editingTabId !== null && tabInputRef.current) {
+    if (editingGroup !== null && tabInputRef.current) {
       tabInputRef.current.focus()
       tabInputRef.current.select()
     }
-  }, [editingTabId])
+  }, [editingGroup])
 
-  // Close tab context menu on click outside
+  // Close group context menu on click outside
   useEffect(() => {
-    if (tabContextMenuId === null) return
+    if (groupContextMenu === null) return
     const handleClick = () => {
-      setTabContextMenuId(null)
-      setTabContextMenuPos(null)
+      setGroupContextMenu(null)
+      setGroupContextMenuPos(null)
     }
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
-  }, [tabContextMenuId])
+  }, [groupContextMenu])
 
-  // Ensure activeTabId exists in tabs
+  // Ensure activeGroup exists in groups
   useEffect(() => {
-    if (tabs.length > 0 && !tabs.find(t => t.id === activeTabId)) {
-      setActiveTabId(tabs[0].id)
+    if (groups.length > 0 && !groups.includes(activeGroup)) {
+      setActiveGroup(groups[0])
     }
-  }, [tabs, activeTabId])
+  }, [groups, activeGroup])
 
-  // Auto-switch tab only when activeWorkspaceId actually changes (e.g. "go to existing" action)
+  // Auto-switch group only when activeWorkspaceId actually changes (e.g. "go to existing" action)
   const prevActiveWorkspaceId = useRef(activeWorkspaceId)
   useEffect(() => {
     if (activeWorkspaceId && activeWorkspaceId !== prevActiveWorkspaceId.current) {
       const ws = workspaces.find(w => w.id === activeWorkspaceId)
       if (ws) {
-        setActiveTabId(ws.tabId || 1)
+        setActiveGroup(ws.group || 'Others')
       }
     }
     prevActiveWorkspaceId.current = activeWorkspaceId
@@ -462,31 +462,31 @@ export function Sidebar({
     target.style.opacity = '1'
     setDraggedIndex(null)
     setDragOverIndex(null)
-    setDragOverTabId(null)
+    setDragOverGroup(null)
     draggedWorkspaceId.current = null
   }
 
-  // Tab drag handlers
-  const handleTabDragOver = (tabId: number, e: React.DragEvent) => {
+  // Group drag handlers
+  const handleGroupDragOver = (group: string, e: React.DragEvent) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
     if (draggedWorkspaceId.current) {
-      setDragOverTabId(tabId)
+      setDragOverGroup(group)
     }
   }
 
-  const handleTabDragLeave = () => {
-    setDragOverTabId(null)
+  const handleGroupDragLeave = () => {
+    setDragOverGroup(null)
   }
 
-  const handleTabDrop = (targetTabId: number, e: React.DragEvent) => {
+  const handleGroupDrop = (targetGroup: string, e: React.DragEvent) => {
     e.preventDefault()
     const workspaceId = draggedWorkspaceId.current
     if (workspaceId) {
-      onSetWorkspaceTab(workspaceId, targetTabId)
-      setActiveTabId(targetTabId)
+      onSetWorkspaceGroup(workspaceId, targetGroup)
+      setActiveGroup(targetGroup)
     }
-    setDragOverTabId(null)
+    setDragOverGroup(null)
     setDraggedIndex(null)
     draggedWorkspaceId.current = null
   }
@@ -519,35 +519,35 @@ export function Sidebar({
     draggedWorkspaceId.current = null
   }
 
-  const handleTabDoubleClick = (tab: SidebarTab, e: React.MouseEvent) => {
+  const handleGroupDoubleClick = (group: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    setEditingTabId(tab.id)
-    setEditTabValue(tab.name)
+    setEditingGroup(group)
+    setEditTabValue(group)
   }
 
-  const handleTabRenameSubmit = (tabId: number) => {
-    onRenameTab(tabId, editTabValue)
-    setEditingTabId(null)
+  const handleGroupRenameSubmit = (group: string) => {
+    onRenameGroup(group, editTabValue)
+    setEditingGroup(null)
   }
 
-  const handleTabKeyDown = (tabId: number, e: React.KeyboardEvent) => {
+  const handleGroupKeyDown = (group: string, e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
-      handleTabRenameSubmit(tabId)
+      handleGroupRenameSubmit(group)
     } else if (e.key === 'Escape') {
-      setEditingTabId(null)
+      setEditingGroup(null)
     }
   }
 
-  const handleTabContextMenu = (tabId: number, e: React.MouseEvent) => {
+  const handleGroupContextMenu = (group: string, e: React.MouseEvent) => {
     e.preventDefault()
-    setTabContextMenuId(tabId)
-    setTabContextMenuPos({ x: e.clientX, y: e.clientY })
+    setGroupContextMenu(group)
+    setGroupContextMenuPos({ x: e.clientX, y: e.clientY })
   }
 
-  const handleDeleteTab = (tabId: number) => {
-    onRemoveTab(tabId)
-    setTabContextMenuId(null)
-    setTabContextMenuPos(null)
+  const handleDeleteGroup = (group: string) => {
+    onRemoveGroup(group)
+    setGroupContextMenu(null)
+    setGroupContextMenuPos(null)
   }
 
   const handleAgentIndicatorClick = async (workspace: Workspace, status: AgentStatus, e: React.MouseEvent) => {
@@ -562,34 +562,34 @@ export function Sidebar({
   return (
     <aside className="sidebar" style={width ? { width: `${width}px` } : undefined}>
       <div className="sidebar-tabs">
-        {tabs.map(tab => (
+        {groups.map(group => (
           <button
-            key={tab.id}
-            className={`sidebar-tab ${activeTabId === tab.id ? 'active' : ''} ${dragOverTabId === tab.id ? 'drag-over' : ''}`}
-            onClick={() => setActiveTabId(tab.id)}
-            onDoubleClick={(e) => handleTabDoubleClick(tab, e)}
-            onContextMenu={(e) => handleTabContextMenu(tab.id, e)}
-            onDragOver={(e) => handleTabDragOver(tab.id, e)}
-            onDragLeave={handleTabDragLeave}
-            onDrop={(e) => handleTabDrop(tab.id, e)}
+            key={group}
+            className={`sidebar-tab ${activeGroup === group ? 'active' : ''} ${dragOverGroup === group ? 'drag-over' : ''}`}
+            onClick={() => setActiveGroup(group)}
+            onDoubleClick={(e) => handleGroupDoubleClick(group, e)}
+            onContextMenu={(e) => handleGroupContextMenu(group, e)}
+            onDragOver={(e) => handleGroupDragOver(group, e)}
+            onDragLeave={handleGroupDragLeave}
+            onDrop={(e) => handleGroupDrop(group, e)}
           >
-            {editingTabId === tab.id ? (
+            {editingGroup === group ? (
               <input
                 ref={tabInputRef}
                 type="text"
                 className="tab-rename-input"
                 value={editTabValue}
                 onChange={(e) => setEditTabValue(e.target.value)}
-                onBlur={() => handleTabRenameSubmit(tab.id)}
-                onKeyDown={(e) => handleTabKeyDown(tab.id, e)}
+                onBlur={() => handleGroupRenameSubmit(group)}
+                onKeyDown={(e) => handleGroupKeyDown(group, e)}
                 onClick={(e) => e.stopPropagation()}
               />
             ) : (
               <>
-                {tabAgentCount[tab.id] > 0 && <span className="tab-agent-dot" />}
-                {tab.name}
-                {tabAgentCount[tab.id] > 0 && (
-                  <span className="tab-count">{tabAgentCount[tab.id]}</span>
+                {groupAgentCount[group] > 0 && <span className="tab-agent-dot" />}
+                {group}
+                {groupAgentCount[group] > 0 && (
+                  <span className="tab-count">{groupAgentCount[group]}</span>
                 )}
               </>
             )}
@@ -597,23 +597,23 @@ export function Sidebar({
         ))}
         <button
           className="sidebar-tab tab-add-btn"
-          onClick={() => onAddTab()}
-          title="Add new tab"
+          onClick={() => onAddGroup()}
+          title="Add new group"
         >
           +
         </button>
       </div>
-      {tabContextMenuId !== null && tabContextMenuPos && (
+      {groupContextMenu !== null && groupContextMenuPos && (
         <div
           className="tab-context-menu"
-          style={{ left: tabContextMenuPos.x, top: tabContextMenuPos.y }}
+          style={{ left: groupContextMenuPos.x, top: groupContextMenuPos.y }}
           onMouseDown={(e) => e.stopPropagation()}
         >
           <button
-            onClick={() => handleDeleteTab(tabContextMenuId)}
-            disabled={tabs.length <= 1}
+            onClick={() => handleDeleteGroup(groupContextMenu)}
+            disabled={groups.length <= 1}
           >
-            Delete Tab
+            Delete Group
           </button>
         </div>
       )}

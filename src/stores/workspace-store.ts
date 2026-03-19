@@ -1,22 +1,19 @@
 import { v4 as uuidv4 } from 'uuid'
-import type { Workspace, AppState, SidebarTab } from '../types'
+import type { Workspace, AppState } from '../types'
 
-const DEFAULT_TABS: SidebarTab[] = [
-  { id: 1, name: 'Tab 1' },
-  { id: 2, name: 'Tab 2' },
-  { id: 3, name: 'Tab 3' }
-]
+const DEFAULT_GROUP = 'Others'
 
 type Listener = () => void
 
 class WorkspaceStore {
   private state: AppState = {
     workspaces: [],
-    activeWorkspaceId: null,
-    tabs: DEFAULT_TABS.map(t => ({ ...t }))
+    activeWorkspaceId: null
   }
 
   private listeners: Set<Listener> = new Set()
+  private extraFields: Record<string, unknown> = {}
+  private groupOrder: string[] = []
 
   getState(): AppState {
     return this.state
@@ -31,6 +28,28 @@ class WorkspaceStore {
     this.listeners.forEach(listener => listener())
   }
 
+  // Group management
+  getGroups(): string[] {
+    const wsGroups = new Set(
+      this.state.workspaces.map(w => w.group || DEFAULT_GROUP)
+    )
+    const result: string[] = []
+    for (const g of this.groupOrder) {
+      result.push(g)
+    }
+    for (const g of wsGroups) {
+      if (!result.includes(g)) result.push(g)
+    }
+    return result.length > 0 ? result : [DEFAULT_GROUP]
+  }
+
+  private getActiveGroup(): string {
+    const active = this.state.workspaces.find(
+      w => w.id === this.state.activeWorkspaceId
+    )
+    return active?.group || DEFAULT_GROUP
+  }
+
   // Workspace actions
   addWorkspace(name: string, folderPath: string): Workspace {
     const workspace: Workspace = {
@@ -38,7 +57,7 @@ class WorkspaceStore {
       name,
       folderPath,
       createdAt: Date.now(),
-      tabId: 1
+      group: this.getActiveGroup()
     }
 
     this.state = {
@@ -103,11 +122,11 @@ class WorkspaceStore {
     this.save()
   }
 
-  setWorkspaceTab(id: string, tabId: number): void {
+  setWorkspaceGroup(id: string, group: string): void {
     this.state = {
       ...this.state,
       workspaces: this.state.workspaces.map(w =>
-        w.id === id ? { ...w, tabId } : w
+        w.id === id ? { ...w, group } : w
       )
     }
 
@@ -115,8 +134,8 @@ class WorkspaceStore {
     this.save()
   }
 
-  getWorkspacesByTab(tabId: number): Workspace[] {
-    return this.state.workspaces.filter(w => (w.tabId || 1) === tabId)
+  getWorkspacesByGroup(group: string): Workspace[] {
+    return this.state.workspaces.filter(w => (w.group || DEFAULT_GROUP) === group)
   }
 
   reorderWorkspaces(fromId: string, toId: string): void {
@@ -141,84 +160,95 @@ class WorkspaceStore {
     this.save()
   }
 
-  // Tab management
-  addTab(name?: string): SidebarTab {
-    const maxId = Math.max(...this.state.tabs.map(t => t.id), 0)
-    const newTab: SidebarTab = { id: maxId + 1, name: name || `Tab ${maxId + 1}` }
-
-    this.state = {
-      ...this.state,
-      tabs: [...this.state.tabs, newTab]
+  // Group management
+  addGroup(name?: string): string {
+    const existing = this.getGroups()
+    let finalName = name || 'New Group'
+    let counter = 1
+    while (existing.includes(finalName)) {
+      finalName = `New Group ${counter++}`
     }
-
+    this.groupOrder = [...this.getGroups(), finalName]
     this.notify()
     this.save()
-    return newTab
+    return finalName
   }
 
-  removeTab(tabId: number): void {
-    if (this.state.tabs.length <= 1) return
+  removeGroup(group: string): void {
+    const groups = this.getGroups()
+    if (groups.length <= 1) return
 
-    const firstTab = this.state.tabs.find(t => t.id !== tabId)
-    if (!firstTab) return
+    const fallback = groups.find(g => g !== group) || DEFAULT_GROUP
 
     this.state = {
       ...this.state,
-      tabs: this.state.tabs.filter(t => t.id !== tabId),
       workspaces: this.state.workspaces.map(w =>
-        (w.tabId || 1) === tabId ? { ...w, tabId: firstTab.id } : w
+        (w.group || DEFAULT_GROUP) === group
+          ? { ...w, group: fallback }
+          : w
       )
     }
+    this.groupOrder = this.groupOrder.filter(g => g !== group)
 
     this.notify()
     this.save()
   }
 
-  renameTab(tabId: number, name: string): void {
+  renameGroup(oldName: string, newName: string): void {
+    const trimmed = newName.trim()
+    if (!trimmed || trimmed === oldName) return
+
     this.state = {
       ...this.state,
-      tabs: this.state.tabs.map(t =>
-        t.id === tabId ? { ...t, name: name.trim() || t.name } : t
+      workspaces: this.state.workspaces.map(w =>
+        (w.group || DEFAULT_GROUP) === oldName
+          ? { ...w, group: trimmed }
+          : w
       )
     }
+    this.groupOrder = this.groupOrder.map(g => g === oldName ? trimmed : g)
 
     this.notify()
     this.save()
   }
 
-  // Workspace switching (within current tab only)
+  // Workspace switching (within current group only)
   switchToNextWorkspace(): void {
     const { workspaces, activeWorkspaceId } = this.state
     const currentWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
-    const currentTabId = currentWorkspace?.tabId || 1
+    const currentGroup = currentWorkspace?.group || DEFAULT_GROUP
 
-    const tabWorkspaces = workspaces.filter(w => (w.tabId || 1) === currentTabId)
-    if (tabWorkspaces.length <= 1) return
+    const groupWorkspaces = workspaces.filter(w => (w.group || DEFAULT_GROUP) === currentGroup)
+    if (groupWorkspaces.length <= 1) return
 
-    const currentIndex = tabWorkspaces.findIndex(w => w.id === activeWorkspaceId)
-    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % tabWorkspaces.length
-    this.setActiveWorkspace(tabWorkspaces[nextIndex].id)
+    const currentIndex = groupWorkspaces.findIndex(w => w.id === activeWorkspaceId)
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % groupWorkspaces.length
+    this.setActiveWorkspace(groupWorkspaces[nextIndex].id)
   }
 
   switchToPreviousWorkspace(): void {
     const { workspaces, activeWorkspaceId } = this.state
     const currentWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
-    const currentTabId = currentWorkspace?.tabId || 1
+    const currentGroup = currentWorkspace?.group || DEFAULT_GROUP
 
-    const tabWorkspaces = workspaces.filter(w => (w.tabId || 1) === currentTabId)
-    if (tabWorkspaces.length <= 1) return
+    const groupWorkspaces = workspaces.filter(w => (w.group || DEFAULT_GROUP) === currentGroup)
+    if (groupWorkspaces.length <= 1) return
 
-    const currentIndex = tabWorkspaces.findIndex(w => w.id === activeWorkspaceId)
-    const prevIndex = currentIndex <= 0 ? tabWorkspaces.length - 1 : currentIndex - 1
-    this.setActiveWorkspace(tabWorkspaces[prevIndex].id)
+    const currentIndex = groupWorkspaces.findIndex(w => w.id === activeWorkspaceId)
+    const prevIndex = currentIndex <= 0 ? groupWorkspaces.length - 1 : currentIndex - 1
+    this.setActiveWorkspace(groupWorkspaces[prevIndex].id)
   }
 
   // Persistence
   async save(): Promise<void> {
+    const activeGroup = this.getActiveGroup()
+
     const data = JSON.stringify({
+      ...this.extraFields,
       workspaces: this.state.workspaces,
       activeWorkspaceId: this.state.activeWorkspaceId,
-      tabs: this.state.tabs
+      activeGroup,
+      groupOrder: this.groupOrder
     })
     await window.electronAPI.workspace.save(data)
   }
@@ -228,15 +258,27 @@ class WorkspaceStore {
     if (data) {
       try {
         const parsed = JSON.parse(data)
-        const workspaces = parsed.workspaces || []
-        const tabs: SidebarTab[] = parsed.tabs && parsed.tabs.length > 0
-          ? parsed.tabs
-          : DEFAULT_TABS.map(t => ({ ...t }))
+        const { workspaces: rawWorkspaces, activeWorkspaceId, groupOrder, ...rest } = parsed
+
+        // Preserve extra fields (terminals, activeTerminalId, etc.)
+        this.extraFields = rest
+
+        // Ensure every workspace has a group
+        const workspaces: Workspace[] = (rawWorkspaces || []).map((w: Workspace) => {
+          if (!w.group) {
+            return { ...w, group: DEFAULT_GROUP }
+          }
+          return w
+        })
+
+        // Restore groupOrder, or derive from workspaces
+        this.groupOrder = Array.isArray(groupOrder) && groupOrder.length > 0
+          ? groupOrder
+          : [...new Set(workspaces.map(w => w.group || DEFAULT_GROUP))]
+
         this.state = {
-          ...this.state,
           workspaces,
-          activeWorkspaceId: parsed.activeWorkspaceId || null,
-          tabs
+          activeWorkspaceId: activeWorkspaceId || null
         }
         this.notify()
       } catch (e) {

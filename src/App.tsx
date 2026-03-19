@@ -64,10 +64,10 @@ function AppContent() {
     if (!duplicateInfo) return
     const { existingWorkspace } = duplicateInfo
     workspaceStore.setActiveWorkspace(existingWorkspace.id)
-    const tabName = state.tabs.find(t => t.id === (existingWorkspace.tabId || 1))?.name || 'Tab'
-    showToast(`已跳轉到「${existingWorkspace.alias || existingWorkspace.name}」（${tabName}）`, 'info')
+    const groupName = existingWorkspace.group || 'Others'
+    showToast(`已跳轉到「${existingWorkspace.alias || existingWorkspace.name}」（${groupName}）`, 'info')
     setDuplicateInfo(null)
-  }, [duplicateInfo, state.tabs, showToast])
+  }, [duplicateInfo, showToast])
 
   const handleDuplicateAddAnyway = useCallback(() => {
     if (!duplicateInfo) return
@@ -81,17 +81,17 @@ function AppContent() {
       <Sidebar
         workspaces={state.workspaces}
         activeWorkspaceId={state.activeWorkspaceId}
-        tabs={state.tabs}
+        groups={workspaceStore.getGroups()}
         onSelectWorkspace={(id) => workspaceStore.setActiveWorkspace(id)}
         onAddWorkspace={handleAddWorkspace}
         onRemoveWorkspace={(id) => workspaceStore.removeWorkspace(id)}
         onRenameWorkspace={(id, alias) => workspaceStore.renameWorkspace(id, alias)}
         onSetWorkspaceRole={(id, role) => workspaceStore.setWorkspaceRole(id, role)}
-        onSetWorkspaceTab={(id, tabId) => workspaceStore.setWorkspaceTab(id, tabId)}
+        onSetWorkspaceGroup={(id, group) => workspaceStore.setWorkspaceGroup(id, group)}
         onReorderWorkspaces={(fromId, toId) => workspaceStore.reorderWorkspaces(fromId, toId)}
-        onAddTab={(name) => workspaceStore.addTab(name)}
-        onRemoveTab={(tabId) => workspaceStore.removeTab(tabId)}
-        onRenameTab={(tabId, name) => workspaceStore.renameTab(tabId, name)}
+        onAddGroup={(name) => workspaceStore.addGroup(name)}
+        onRemoveGroup={(group) => workspaceStore.removeGroup(group)}
+        onRenameGroup={(oldName, newName) => workspaceStore.renameGroup(oldName, newName)}
         onOpenAbout={() => setShowAbout(true)}
       />
       {showAbout && (
@@ -101,7 +101,7 @@ function AppContent() {
         <DuplicateWorkspaceDialog
           folderPath={duplicateInfo.folderPath}
           existingName={duplicateInfo.existingWorkspace.alias || duplicateInfo.existingWorkspace.name}
-          existingTabName={state.tabs.find(t => t.id === (duplicateInfo.existingWorkspace.tabId || 1))?.name || 'Tab'}
+          existingGroupName={duplicateInfo.existingWorkspace.group || 'Others'}
           onGoToExisting={handleDuplicateGoToExisting}
           onAddAnyway={handleDuplicateAddAnyway}
           onCancel={() => setDuplicateInfo(null)}
