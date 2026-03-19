@@ -209,42 +209,9 @@ export function Sidebar({
         workspaceId: t.workspaceId,
         workspaceName: workspaces.find(w => w.id === t.workspaceId)?.alias
           || workspaces.find(w => w.id === t.workspaceId)?.name
-          || '...',
-        createdAt: t.createdAt
+          || '...'
       }))
   }, [embeddedTerminals, workspaces])
-
-  // Re-render every 60s for elapsed time display (paused when tab hidden)
-  const [, setTick] = useState(0)
-  useEffect(() => {
-    if (runningAgents.length === 0) return
-    let timer: ReturnType<typeof setInterval> | null = null
-
-    const start = () => {
-      if (!timer) timer = setInterval(() => setTick(t => t + 1), 90000)
-    }
-    const stop = () => {
-      if (timer) { clearInterval(timer); timer = null }
-    }
-    const onVisibility = () => {
-      if (document.hidden) stop(); else start()
-    }
-
-    if (!document.hidden) start()
-    document.addEventListener('visibilitychange', onVisibility)
-    return () => {
-      stop()
-      document.removeEventListener('visibilitychange', onVisibility)
-    }
-  }, [runningAgents.length])
-
-  const formatElapsed = (createdAt: number) => {
-    const mins = Math.floor((Date.now() - createdAt) / 60000)
-    if (mins < 1) return '<1m'
-    if (mins < 60) return `${mins}m`
-    const hours = Math.floor(mins / 60)
-    return `${hours}h ${mins % 60}m`
-  }
 
   const handleAgentOverviewClick = async (agent: { terminalId: string; workspaceId: string }) => {
     const ws = workspaces.find(w => w.id === agent.workspaceId)
@@ -264,7 +231,9 @@ export function Sidebar({
       const current = terminalStore.getState().activeTerminalId
       const belongsToWs = wsTerminals.some(t => t.id === current)
       if (!belongsToWs) {
-        terminalStore.setActiveTerminal(wsTerminals[wsTerminals.length - 1].id)
+        // 優先切到 agent terminal，沒有才切最後一個
+        const agentTerm = wsTerminals.find(t => t.type === 'agent')
+        terminalStore.setActiveTerminal((agentTerm || wsTerminals[wsTerminals.length - 1]).id)
       }
     }
   }
@@ -752,7 +721,6 @@ export function Sidebar({
                 >
                   <span className="agent-overview-dot" />
                   <span className="agent-overview-name">{agent.workspaceName}</span>
-                  <span className="agent-overview-time">{formatElapsed(agent.createdAt)}</span>
                 </div>
               ))}
             </div>

@@ -228,21 +228,36 @@ export const TerminalPanel = memo(function TerminalPanel({
     // === Write batching ===
     // Claude agent 每秒輸出數百小 chunk，逐一 write 會產生中間渲染狀態導致 viewport 跳動
     // 用 rAF 收集同一 frame 內所有 chunk，一次 write，減少 parse/render 次數
+    //
+    // Scroll 策略：write callback 內不直接 scrollToBottom()（會和 renderer 同 frame 競爭），
+    // 改為設 flag，在下一個 rAF 開頭先 scroll 再 write，確保 scroll 和 write 不在同一渲染週期。
     let writeBuf = ''
     let writeRaf: number | null = null
+    let scrollPending = false
+
     const flushWriteBuf = () => {
       writeRaf = null
+
+      // 先處理上一幀的 scroll（此時前一次 write 的資料已完全 parse + render）
+      if (scrollPending) {
+        terminal.scrollToBottom()
+        scrollPending = false
+      }
+
       if (writeBuf.length === 0) return
       const data = writeBuf
       writeBuf = ''
 
-      const buf = terminal.buffer.active
-      const isNormal = buf.type === 'normal'
+      const isNormal = terminal.buffer.active.type === 'normal'
 
       terminal.write(data, () => {
         if (!isNormal) return
         if (autoScroll) {
-          terminal.scrollToBottom()
+          scrollPending = true
+          // 確保下一幀會執行 scroll（即使沒有新資料）
+          if (writeRaf === null) {
+            writeRaf = requestAnimationFrame(flushWriteBuf)
+          }
         }
       })
     }
@@ -258,14 +273,16 @@ export const TerminalPanel = memo(function TerminalPanel({
     })
 
     // Buffer flushed → xterm（activate 時一次補回）
-    // 用 write callback 確保資料 parse 完成後才 scrollToBottom
+    // 同樣用延遲 scroll 避免同 frame 競爭
     const unsubFlush = window.electronAPI.pty.onBufferFlushed((id, data) => {
       if (id !== terminalId) return
-      // flush 前先清掉 pending batch，確保順序正確
       if (writeRaf !== null) { cancelAnimationFrame(writeRaf); writeRaf = null }
       const pending = writeBuf; writeBuf = ''
       terminal.write(pending + data, () => {
-        terminal.scrollToBottom()
+        scrollPending = true
+        if (writeRaf === null) {
+          writeRaf = requestAnimationFrame(flushWriteBuf)
+        }
       })
     })
 

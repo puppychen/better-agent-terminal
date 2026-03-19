@@ -953,12 +953,6 @@ body {
   white-space: nowrap;
 }
 
-.agent-overview-time {
-  color: var(--text-secondary);
-  font-size: 11px;
-  flex-shrink: 0;
-}
-
 /* Terminal Switcher */
 .terminal-switcher {
   display: flex;
