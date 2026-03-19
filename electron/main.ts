@@ -1,7 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from 'electron'
 import path from 'path'
 import fs from 'fs'
-import { WindowTilingManager } from './window-tiling'
+import { PtyManager } from './pty-manager'
 
 // userData migration: Better Agent Terminal → Better Agent Workspace
 // Dev mode uses package.json "name" (lowercase), production uses "productName" (title case)
@@ -21,7 +21,8 @@ if (!fs.existsSync(newUserDataDir)) {
 }
 
 let mainWindow: BrowserWindow | null = null
-let tilingManager: WindowTilingManager | null = null
+let ptyManager: PtyManager | null = null
+let forceQuit = false
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 const WINDOW_STATE_FILE = 'window-state.json'
@@ -52,7 +53,7 @@ async function saveWindowState(state: WindowState): Promise<void> {
 
 async function createWindow() {
   const savedState = await loadWindowState()
-  const defaultWidth = 420
+  const defaultWidth = 1200
   const defaultHeight = 800
 
   mainWindow = new BrowserWindow({
@@ -60,9 +61,9 @@ async function createWindow() {
     height: savedState?.height || defaultHeight,
     x: savedState?.x,
     y: savedState?.y,
-    minWidth: 300,
+    minWidth: 600,
     minHeight: 400,
-    maxWidth: 600,
+    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -80,30 +81,121 @@ async function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
-  mainWindow.on('close', () => {
-    if (mainWindow) {
-      const bounds = mainWindow.getBounds()
-      saveWindowState({
-        x: bounds.x,
-        y: bounds.y,
-        width: bounds.width,
-        height: bounds.height
-      })
-    }
-  })
-
   mainWindow.on('closed', () => {
-    if (tilingManager) {
-      tilingManager.destroy()
-      tilingManager = null
+    if (ptyManager) {
+      ptyManager.dispose()
+      ptyManager = null
     }
     mainWindow = null
   })
 
-  tilingManager = new WindowTilingManager(mainWindow)
+  // Gate-and-Buffer: window blur → 全部終端停止 IPC 推送
+  mainWindow.on('blur', () => {
+    ptyManager?.deactivateAll()
+  })
+
+  // Window focus → 通知 renderer 恢復 active terminal
+  mainWindow.on('focus', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window:focus')
+    }
+  })
+
+  ptyManager = new PtyManager()
+  ptyManager.setMainWindow(mainWindow)
+
+  // === Custom application menu ===
+  // Cmd+W → close active terminal tab (not window)
+  // Cmd+Q → quit with confirmation
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        {
+          label: 'Quit',
+          accelerator: 'CmdOrCtrl+Q',
+          click: () => {
+            if (!mainWindow || mainWindow.isDestroyed()) { app.quit(); return }
+            mainWindow.webContents.send('app:confirm-quit')
+          }
+        }
+      ]
+    },
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Close Tab',
+          accelerator: 'CmdOrCtrl+W',
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('terminal:close-active-tab')
+            }
+          }
+        }
+      ]
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { type: 'separator' },
+        { role: 'front' }
+      ]
+    }
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+
+  // Prevent close from instantly quitting — send to renderer for confirmation
+  mainWindow.on('close', (e) => {
+    if (!forceQuit && mainWindow && !mainWindow.isDestroyed()) {
+      e.preventDefault()
+      mainWindow.webContents.send('app:confirm-quit')
+    }
+  })
 }
 
 app.whenReady().then(createWindow)
+
+app.on('before-quit', () => {
+  if (ptyManager) {
+    ptyManager.dispose()
+    ptyManager = null
+  }
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -518,13 +610,9 @@ ipcMain.handle('shell:open-terminal-at-path', async (_event, folderPath: string)
     // Search by cwd instead of title (more reliable for same-named projects)
     const found = await findTerminalTabByCwd(folderPath)
     if (found) {
-      if (tilingManager?.isEnabled()) tilingManager.syncTerminalPosition()
       return { action: 'focused' }
     }
     await openNewTerminalTab(folderPath, titlePrefix)
-    if (tilingManager?.isEnabled()) {
-      setTimeout(() => tilingManager?.syncTerminalPosition(), 500)
-    }
     return { action: 'created' }
   }
   return { action: 'unsupported' }
@@ -551,14 +639,10 @@ ipcMain.handle('shell:open-terminal-with-command', async (_event, folderPath: st
     }
 
     if (found) {
-      if (tilingManager?.isEnabled()) tilingManager.syncTerminalPosition()
       return { action: 'focused' }
     }
 
     await openNewTerminalTab(folderPath, titlePrefix, command)
-    if (tilingManager?.isEnabled()) {
-      setTimeout(() => tilingManager?.syncTerminalPosition(), 500)
-    }
     return { action: 'created' }
   }
   return { action: 'unsupported' }
@@ -616,9 +700,6 @@ ipcMain.handle('shell:focus-agent', async (_event, folderPath: string, agentType
       result = await findTerminalTabByProcess('happy', folderPath, { focus: true, updateTitle: title })
     }
 
-    if (result && tilingManager?.isEnabled()) {
-      tilingManager.syncTerminalPosition()
-    }
     return result
   }
   return false
@@ -628,9 +709,6 @@ ipcMain.handle('shell:focus-agent', async (_event, folderPath: string, agentType
 ipcMain.handle('shell:focus-terminal-at-path', async (_event, folderPath: string) => {
   if (process.platform === 'darwin') {
     const found = await findTerminalTabByCwd(folderPath)
-    if (found && tilingManager?.isEnabled()) {
-      tilingManager.syncTerminalPosition()
-    }
     return found
   }
   return false
@@ -776,22 +854,38 @@ ipcMain.handle('shell:get-sub-repos-batch', async (_event, paths: string[]) => {
   return result
 })
 
-// Tiling management
-ipcMain.handle('tiling:enable', () => {
-  tilingManager?.enable()
-  return true
+// Quit confirmation from renderer
+ipcMain.on('app:quit-confirmed', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const bounds = mainWindow.getBounds()
+    saveWindowState({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height })
+  }
+  forceQuit = true
+  app.quit()
 })
 
-ipcMain.handle('tiling:disable', () => {
-  tilingManager?.disable()
-  return true
+// === PTY IPC Handlers (embedded terminal) ===
+
+ipcMain.handle('pty:create', async (_event, options) => {
+  return ptyManager?.create(options) ?? false
 })
 
-ipcMain.handle('tiling:sync', () => {
-  tilingManager?.syncTerminalPosition()
-  return true
+ipcMain.handle('pty:write', async (_event, id: string, data: string) => {
+  ptyManager?.write(id, data)
 })
 
-ipcMain.handle('tiling:get-status', () => {
-  return { enabled: tilingManager?.isEnabled() ?? false }
+ipcMain.handle('pty:resize', async (_event, id: string, cols: number, rows: number) => {
+  ptyManager?.resize(id, cols, rows)
+})
+
+ipcMain.handle('pty:kill', async (_event, id: string) => {
+  return ptyManager?.kill(id) ?? false
+})
+
+ipcMain.handle('pty:activate', async (_event, id: string) => {
+  ptyManager?.activate(id)
+})
+
+ipcMain.handle('pty:deactivate', async (_event, id: string) => {
+  ptyManager?.deactivate(id)
 })

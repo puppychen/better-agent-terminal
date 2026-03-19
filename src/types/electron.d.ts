@@ -1,4 +1,4 @@
-import type { CodeAgentType } from './index'
+import type { CodeAgentType, CreatePtyOptions } from './index'
 
 interface SubRepoInfo {
   name: string
@@ -29,11 +29,22 @@ interface ElectronAPI {
     getGitInfoBatch: (paths: string[]) => Promise<Record<string, { branch: string; dirty: boolean } | null>>
     getSubReposBatch: (paths: string[]) => Promise<Record<string, SubRepoInfo[]>>
   }
-  tiling: {
-    enable: () => Promise<boolean>
-    disable: () => Promise<boolean>
-    syncPosition: () => Promise<boolean>
-    getStatus: () => Promise<{ enabled: boolean }>
+  pty: {
+    create: (options: CreatePtyOptions) => Promise<boolean>
+    write: (id: string, data: string) => Promise<void>
+    resize: (id: string, cols: number, rows: number) => Promise<void>
+    kill: (id: string) => Promise<boolean>
+    activate: (id: string) => Promise<void>
+    deactivate: (id: string) => Promise<void>
+    onOutput: (callback: (id: string, data: string) => void) => () => void
+    onExit: (callback: (id: string, exitCode: number) => void) => () => void
+    onBufferFlushed: (callback: (id: string, data: string) => void) => () => void
+  }
+  window: {
+    onFocus: (callback: () => void) => () => void
+    onCloseActiveTab: (callback: () => void) => () => void
+    onConfirmQuit: (callback: () => void) => () => void
+    confirmQuit: () => void
   }
 }
 

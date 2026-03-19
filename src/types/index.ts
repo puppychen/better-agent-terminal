@@ -1,5 +1,5 @@
 // Code Agent type for external Terminal
-export type CodeAgentType = 'happy' | 'claude' | 'claude-chrome';
+export type CodeAgentType = 'claude';
 
 export interface Workspace {
   id: string;
@@ -26,4 +26,30 @@ export const PRESET_ROLES = [
 export interface AppState {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
+}
+
+// === 嵌入式終端型別 ===
+
+export interface TerminalInstance {
+  id: string;
+  workspaceId: string;
+  label: string;
+  type: 'shell' | 'agent';
+  agentType?: CodeAgentType;
+  cwd: string;
+  createdAt: number;
+}
+
+export interface CreatePtyOptions {
+  id: string;
+  cwd: string;
+  type: 'shell' | 'agent';
+  agentType?: CodeAgentType;
+  shell?: string;
+  initialCommand?: string;
+}
+
+export interface TerminalState {
+  terminals: TerminalInstance[];
+  activeTerminalId: string | null;
 }

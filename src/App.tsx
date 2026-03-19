@@ -1,19 +1,65 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { workspaceStore } from './stores/workspace-store'
+import { terminalStore } from './stores/terminal-store'
 import { Sidebar } from './components/Sidebar'
+import { MainPanel } from './components/MainPanel'
 import { AboutPanel } from './components/AboutPanel'
 import { ToastProvider, useToast } from './components/Toast'
 import { DuplicateWorkspaceDialog } from './components/DuplicateWorkspaceDialog'
+import { ConfirmDialog } from './components/ConfirmDialog'
 import type { AppState, Workspace } from './types'
 
 function AppContent() {
   const [state, setState] = useState<AppState>(workspaceStore.getState())
   const [showAbout, setShowAbout] = useState(false)
+  const [closeConfirm, setCloseConfirm] = useState<{
+    terminalId: string
+    label: string
+    isAgent: boolean
+  } | null>(null)
+  const [showQuitConfirm, setShowQuitConfirm] = useState(false)
   const [duplicateInfo, setDuplicateInfo] = useState<{
     folderPath: string
     existingWorkspace: Workspace
   } | null>(null)
   const { showToast } = useToast()
+
+  // Resizable sidebar
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem('sidebar-width')
+    return saved ? Math.max(150, Math.min(600, Number(saved))) : 260
+  })
+  const isDragging = useRef(false)
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return
+      const newWidth = Math.max(150, Math.min(600, e.clientX))
+      setSidebarWidth(newWidth)
+    }
+    const handleMouseUp = () => {
+      if (!isDragging.current) return
+      isDragging.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem('sidebar-width', String(sidebarWidth))
+  }, [sidebarWidth])
+
+  const handleResizeStart = useCallback(() => {
+    isDragging.current = true
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [])
 
   useEffect(() => {
     const unsubscribe = workspaceStore.subscribe(() => {
@@ -35,11 +81,38 @@ function AppContent() {
 
     document.addEventListener('keydown', handleKeyDown)
 
+    // Window focus → re-activate current terminal (Gate-and-Buffer)
+    const unsubWindowFocus = window.electronAPI.window?.onFocus(() => {
+      terminalStore.onWindowFocus()
+    })
+
+    // Cmd+W → close active terminal tab with confirmation
+    const unsubCloseTab = window.electronAPI.window?.onCloseActiveTab(() => {
+      const { activeTerminalId, terminals } = terminalStore.getState()
+      if (!activeTerminalId) return
+      const terminal = terminals.find(t => t.id === activeTerminalId)
+      if (!terminal) return
+
+      setCloseConfirm({
+        terminalId: activeTerminalId,
+        label: terminal.label || 'terminal',
+        isAgent: terminal.type === 'agent'
+      })
+    })
+
+    // Cmd+Q / window close → show quit confirmation
+    const unsubQuit = window.electronAPI.window?.onConfirmQuit(() => {
+      setShowQuitConfirm(true)
+    })
+
     // Load saved workspaces on startup
     workspaceStore.load()
 
     return () => {
       unsubscribe()
+      unsubWindowFocus?.()
+      unsubCloseTab?.()
+      unsubQuit?.()
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [])
@@ -76,9 +149,32 @@ function AppContent() {
     setDuplicateInfo(null)
   }, [duplicateInfo])
 
+  const handleCreateEmbeddedTerminal = useCallback(async (
+    workspaceId: string, cwd: string,
+    options?: { type?: 'shell' | 'agent'; agentType?: 'claude'; initialCommand?: string }
+  ) => {
+    await terminalStore.createTerminal(workspaceId, cwd, options)
+  }, [])
+
+  const handleCycleAgent = useCallback((direction: 1 | -1) => {
+    const { terminals, activeTerminalId } = terminalStore.getState()
+    const agents = terminals.filter(t => t.type === 'agent')
+    if (agents.length <= 1) return
+
+    const currentIdx = agents.findIndex(t => t.id === activeTerminalId)
+    const nextIdx = (currentIdx + direction + agents.length) % agents.length
+    const nextAgent = agents[nextIdx]
+
+    workspaceStore.setActiveWorkspace(nextAgent.workspaceId)
+    terminalStore.setActiveTerminal(nextAgent.id)
+  }, [])
+
+  const activeWorkspace = state.workspaces.find(w => w.id === state.activeWorkspaceId)
+
   return (
-    <div className="app app-sidebar-only">
+    <div className="app">
       <Sidebar
+        width={sidebarWidth}
         workspaces={state.workspaces}
         activeWorkspaceId={state.activeWorkspaceId}
         groups={workspaceStore.getGroups()}
@@ -93,6 +189,25 @@ function AppContent() {
         onRemoveGroup={(group) => workspaceStore.removeGroup(group)}
         onRenameGroup={(oldName, newName) => workspaceStore.renameGroup(oldName, newName)}
         onOpenAbout={() => setShowAbout(true)}
+        onCreateEmbeddedTerminal={handleCreateEmbeddedTerminal}
+      />
+      <div
+        className="resize-handle"
+        onMouseDown={handleResizeStart}
+      />
+      <MainPanel
+        activeWorkspaceId={state.activeWorkspaceId}
+        workspaceCwd={activeWorkspace?.folderPath ?? null}
+        onCycleAgent={handleCycleAgent}
+        onRequestCloseTab={(id) => {
+          const terminal = terminalStore.getState().terminals.find(t => t.id === id)
+          if (!terminal) return
+          setCloseConfirm({
+            terminalId: id,
+            label: terminal.label || 'terminal',
+            isAgent: terminal.type === 'agent'
+          })
+        }}
       />
       {showAbout && (
         <AboutPanel onClose={() => setShowAbout(false)} />
@@ -105,6 +220,34 @@ function AppContent() {
           onGoToExisting={handleDuplicateGoToExisting}
           onAddAnyway={handleDuplicateAddAnyway}
           onCancel={() => setDuplicateInfo(null)}
+        />
+      )}
+      {closeConfirm && (
+        <ConfirmDialog
+          title={closeConfirm.isAgent ? 'Close Agent' : 'Close Terminal'}
+          message={`Close "${closeConfirm.label}"?`}
+          detail={closeConfirm.isAgent ? 'The running agent process will be terminated.' : undefined}
+          confirmLabel={closeConfirm.isAgent ? 'Terminate' : 'Close'}
+          danger={closeConfirm.isAgent}
+          onConfirm={() => {
+            terminalStore.killTerminal(closeConfirm.terminalId)
+            setCloseConfirm(null)
+          }}
+          onCancel={() => setCloseConfirm(null)}
+        />
+      )}
+      {showQuitConfirm && (
+        <ConfirmDialog
+          title="Quit Better Agent Workspace"
+          message="Are you sure you want to quit?"
+          detail="All running terminals and agents will be terminated."
+          confirmLabel="Quit"
+          danger
+          onConfirm={() => {
+            setShowQuitConfirm(false)
+            window.electronAPI.window.confirmQuit()
+          }}
+          onCancel={() => setShowQuitConfirm(false)}
         />
       )}
     </div>

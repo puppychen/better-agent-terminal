@@ -1,29 +1,10 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
-import type { Workspace, CodeAgentType } from '../types'
+import { useState, useRef, useEffect, useMemo } from 'react'
+import type { Workspace } from '../types'
 import { PRESET_ROLES } from '../types'
-import { CodeAgentSelectDialog } from './CodeAgentSelectDialog'
-
-interface TerminalTabState {
-  tty: string
-  busy: boolean
-  processes: string[]
-  cwd?: string
-}
+import { terminalStore } from '../stores/terminal-store'
 
 interface AgentStatus {
-  type: 'claude' | 'happy'
-}
-
-interface GitInfo {
-  branch: string
-  dirty: boolean
-}
-
-interface SubRepoInfo {
-  name: string
-  path: string
-  branch: string
-  dirty: boolean
+  type: 'claude'
 }
 
 interface SidebarProps {
@@ -41,6 +22,11 @@ interface SidebarProps {
   onRemoveGroup: (group: string) => void
   onRenameGroup: (oldName: string, newName: string) => void
   onOpenAbout: () => void
+  onCreateEmbeddedTerminal?: (workspaceId: string, cwd: string, options?: {
+    type?: 'shell' | 'agent'
+    agentType?: 'claude'
+    initialCommand?: string
+  }) => void
   width?: number
 }
 
@@ -65,6 +51,7 @@ export function Sidebar({
   onRemoveGroup,
   onRenameGroup,
   onOpenAbout,
+  onCreateEmbeddedTerminal,
   width
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -76,16 +63,14 @@ export function Sidebar({
   const [dragOverGroup, setDragOverGroup] = useState<string | null>(null)
   const [ideMenuId, setIdeMenuId] = useState<string | null>(null)
   const [activeGroup, setActiveGroup] = useState<string>(groups[0] || 'Others')
-  const [terminalAgentDialogId, setTerminalAgentDialogId] = useState<string | null>(null)
-  const [tilingEnabled, setTilingEnabled] = useState(false)
-  const [terminalStatus, setTerminalStatus] = useState<{ claude: boolean; happy: boolean; terminal: boolean } | null>(null)
+  const [wsContextMenu, setWsContextMenu] = useState<string | null>(null)
+  const [wsContextMenuPos, setWsContextMenuPos] = useState<{ x: number; y: number } | null>(null)
+  const [agentPanelOpen, setAgentPanelOpen] = useState(true)
   const [editingGroup, setEditingGroup] = useState<string | null>(null)
   const [editTabValue, setEditTabValue] = useState('')
   const [groupContextMenu, setGroupContextMenu] = useState<string | null>(null)
   const [groupContextMenuPos, setGroupContextMenuPos] = useState<{ x: number; y: number } | null>(null)
-  const [agentStatuses, setAgentStatuses] = useState<Record<string, AgentStatus | null>>({})
-  const [gitInfoMap, setGitInfoMap] = useState<Record<string, GitInfo | null>>({})
-  const [subRepoMap, setSubRepoMap] = useState<Record<string, SubRepoInfo[]>>({})
+  const [embeddedTerminals, setEmbeddedTerminals] = useState(terminalStore.getState())
   const inputRef = useRef<HTMLInputElement>(null)
   const tabInputRef = useRef<HTMLInputElement>(null)
   const roleMenuRef = useRef<HTMLDivElement>(null)
@@ -110,38 +95,6 @@ export function Sidebar({
     [workspaces, activeGroup]
   )
 
-  // Count agents per group
-  const groupAgentCount = useMemo(() => {
-    const counts: Record<string, number> = {}
-    groups.forEach(g => { counts[g] = 0 })
-    workspaces.forEach(ws => {
-      if (agentStatuses[ws.id]) {
-        const g = ws.group || 'Others'
-        counts[g] = (counts[g] || 0) + 1
-      }
-    })
-    return counts
-  }, [groups, workspaces, agentStatuses])
-
-  // Load tiling status on mount
-  useEffect(() => {
-    window.electronAPI.tiling.getStatus().then(s => setTilingEnabled(s.enabled))
-  }, [])
-
-  // Check terminal status when active workspace changes
-  useEffect(() => {
-    if (!activeWorkspaceId) {
-      setTerminalStatus(null)
-      return
-    }
-    const ws = workspaces.find(w => w.id === activeWorkspaceId)
-    if (!ws) {
-      setTerminalStatus(null)
-      return
-    }
-    window.electronAPI.shell.checkTerminals(ws.folderPath).then(setTerminalStatus)
-  }, [activeWorkspaceId, workspaces])
-
   useEffect(() => {
     if (editingId && inputRef.current) {
       inputRef.current.focus()
@@ -149,7 +102,7 @@ export function Sidebar({
     }
   }, [editingId])
 
-  // Close menus when clicking outside (unified listener for both menus)
+  // Close menus when clicking outside
   useEffect(() => {
     if (!roleMenuId && !ideMenuId) return
 
@@ -187,6 +140,17 @@ export function Sidebar({
     return () => document.removeEventListener('mousedown', handleClick)
   }, [groupContextMenu])
 
+  // Close workspace context menu on click outside
+  useEffect(() => {
+    if (wsContextMenu === null) return
+    const handleClick = () => {
+      setWsContextMenu(null)
+      setWsContextMenuPos(null)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [wsContextMenu])
+
   // Ensure activeGroup exists in groups
   useEffect(() => {
     if (groups.length > 0 && !groups.includes(activeGroup)) {
@@ -206,200 +170,144 @@ export function Sidebar({
     prevActiveWorkspaceId.current = activeWorkspaceId
   }, [activeWorkspaceId, workspaces])
 
-  // Agent status polling — only when window is visible
-  const workspacesRef = useRef(workspaces)
-  workspacesRef.current = workspaces
-  const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const emptySubRepoPaths = useRef<Set<string>>(new Set())
-
-  const pollGitInfo = useCallback(async () => {
-    try {
-      const paths = workspacesRef.current.map(ws => ws.folderPath)
-      const gitBatch = await window.electronAPI.shell.getGitInfoBatch(paths)
-      const newGitInfoMap: Record<string, GitInfo | null> = {}
-      const pathsNeedSubScan: string[] = []
-
-      for (const ws of workspacesRef.current) {
-        const info = gitBatch[ws.folderPath] ?? null
-        newGitInfoMap[ws.id] = info
-        if (!info && !emptySubRepoPaths.current.has(ws.folderPath)) {
-          pathsNeedSubScan.push(ws.folderPath)
-        }
-      }
-      setGitInfoMap(newGitInfoMap)
-
-      if (pathsNeedSubScan.length > 0) {
-        const subBatch = await window.electronAPI.shell.getSubReposBatch(pathsNeedSubScan)
-        setSubRepoMap(prev => {
-          const next = { ...prev }
-          for (const ws of workspacesRef.current) {
-            const repos = subBatch[ws.folderPath]
-            if (repos !== undefined) {
-              if (repos.length === 0) {
-                emptySubRepoPaths.current.add(ws.folderPath)
-              } else {
-                next[ws.id] = repos
-              }
-            }
-          }
-          return next
-        })
-      }
-    } catch { /* silent */ }
+  // Subscribe to embedded terminal store for agent indicators
+  useEffect(() => {
+    return terminalStore.subscribe(() => setEmbeddedTerminals(terminalStore.getState()))
   }, [])
 
-  const pollAgentStatuses = useCallback(async () => {
-    try {
-      const terminalStates: TerminalTabState[] = await window.electronAPI.shell.getAllTerminalStates()
-      const newStatuses: Record<string, AgentStatus | null> = {}
+  // Derive agent statuses from embedded terminal store
+  const agentStatuses = useMemo(() => {
+    const statuses: Record<string, AgentStatus | null> = {}
+    for (const ws of workspaces) {
+      const hasAgent = embeddedTerminals.terminals.some(
+        t => t.workspaceId === ws.id && t.type === 'agent'
+      )
+      statuses[ws.id] = hasAgent ? { type: 'claude' } : null
+    }
+    return statuses
+  }, [workspaces, embeddedTerminals])
 
-      for (const ws of workspacesRef.current) {
-        let found: AgentStatus | null = null
-        for (const ts of terminalStates) {
-          if (ts.cwd === ws.folderPath) {
-            const hasClaude = ts.processes.some(p => p.includes('claude'))
-            const hasHappy = ts.processes.some(p => p.includes('happy'))
-            if (hasClaude || hasHappy) {
-              found = { type: hasClaude ? 'claude' : 'happy' }
-              break
-            }
-          }
-        }
-        newStatuses[ws.id] = found
+  // Count agents per group (must be after agentStatuses)
+  const groupAgentCount = useMemo(() => {
+    const counts: Record<string, number> = {}
+    groups.forEach(g => { counts[g] = 0 })
+    workspaces.forEach(ws => {
+      if (agentStatuses[ws.id]) {
+        const g = ws.group || 'Others'
+        counts[g] = (counts[g] || 0) + 1
       }
+    })
+    return counts
+  }, [groups, workspaces, agentStatuses])
 
-      setAgentStatuses(newStatuses)
-    } catch { /* silent */ }
+  // Agent Overview: running agents list
+  const runningAgents = useMemo(() => {
+    return embeddedTerminals.terminals
+      .filter(t => t.type === 'agent')
+      .map(t => ({
+        terminalId: t.id,
+        workspaceId: t.workspaceId,
+        workspaceName: workspaces.find(w => w.id === t.workspaceId)?.alias
+          || workspaces.find(w => w.id === t.workspaceId)?.name
+          || '...',
+        createdAt: t.createdAt
+      }))
+  }, [embeddedTerminals, workspaces])
 
-    // Git info — independent of terminal states
-    await pollGitInfo()
-  }, [pollGitInfo])
-
-  const startPolling = useCallback(() => {
-    if (pollingTimerRef.current) return
-    pollAgentStatuses()
-    pollingTimerRef.current = setInterval(pollAgentStatuses, 30000)
-  }, [pollAgentStatuses])
-
-  const stopPolling = useCallback(() => {
-    if (!pollingTimerRef.current) return
-    clearInterval(pollingTimerRef.current)
-    pollingTimerRef.current = null
-  }, [])
-
-  // Fetch git info immediately on mount (independent of terminal polling)
+  // Re-render every 60s for elapsed time display (paused when tab hidden)
+  const [, setTick] = useState(0)
   useEffect(() => {
-    pollGitInfo()
-  }, [pollGitInfo])
+    if (runningAgents.length === 0) return
+    let timer: ReturnType<typeof setInterval> | null = null
 
-  // Poll only when window is focused; stop when user switches to another app
-  useEffect(() => {
-    const handleFocus = () => startPolling()
-    const handleBlur = () => stopPolling()
-
-    // Start if already focused
-    if (document.hasFocus()) {
-      startPolling()
+    const start = () => {
+      if (!timer) timer = setInterval(() => setTick(t => t + 1), 90000)
+    }
+    const stop = () => {
+      if (timer) { clearInterval(timer); timer = null }
+    }
+    const onVisibility = () => {
+      if (document.hidden) stop(); else start()
     }
 
-    window.addEventListener('focus', handleFocus)
-    window.addEventListener('blur', handleBlur)
+    if (!document.hidden) start()
+    document.addEventListener('visibilitychange', onVisibility)
     return () => {
-      window.removeEventListener('focus', handleFocus)
-      window.removeEventListener('blur', handleBlur)
-      stopPolling()
+      stop()
+      document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [startPolling, stopPolling])
+  }, [runningAgents.length])
 
-  const handleToggleTiling = async () => {
-    if (tilingEnabled) {
-      await window.electronAPI.tiling.disable()
-      setTilingEnabled(false)
-    } else {
-      await window.electronAPI.tiling.enable()
-      setTilingEnabled(true)
-    }
+  const formatElapsed = (createdAt: number) => {
+    const mins = Math.floor((Date.now() - createdAt) / 60000)
+    if (mins < 1) return '<1m'
+    if (mins < 60) return `${mins}m`
+    const hours = Math.floor(mins / 60)
+    return `${hours}h ${mins % 60}m`
   }
 
-  // When selecting a workspace, try to focus the corresponding Terminal tab
-  const handleWorkspaceSelect = async (workspace: Workspace) => {
+  const handleAgentOverviewClick = async (agent: { terminalId: string; workspaceId: string }) => {
+    const ws = workspaces.find(w => w.id === agent.workspaceId)
+    if (ws) {
+      setActiveGroup(ws.group || 'Others')
+      onSelectWorkspace(ws.id)
+    }
+    await terminalStore.setActiveTerminal(agent.terminalId)
+  }
+
+  // When selecting a workspace, switch to its most recent terminal
+  const handleWorkspaceSelect = (workspace: Workspace) => {
     onSelectWorkspace(workspace.id)
-
-    // Check all terminal types available
-    const status = await window.electronAPI.shell.checkTerminals(workspace.folderPath)
-    setTerminalStatus(status)
-
-    // Focus priority: agent first, then pure terminal
-    if (status.claude) {
-      await window.electronAPI.shell.focusAgent(workspace.folderPath, 'claude')
-    } else if (status.happy) {
-      await window.electronAPI.shell.focusAgent(workspace.folderPath, 'happy')
-    } else if (status.terminal) {
-      await window.electronAPI.shell.focusTerminalAtPath(workspace.folderPath)
+    // Auto-switch to the workspace's last active terminal if any
+    const wsTerminals = terminalStore.getTerminalsForWorkspace(workspace.id)
+    if (wsTerminals.length > 0) {
+      const current = terminalStore.getState().activeTerminalId
+      const belongsToWs = wsTerminals.some(t => t.id === current)
+      if (!belongsToWs) {
+        terminalStore.setActiveTerminal(wsTerminals[wsTerminals.length - 1].id)
+      }
     }
-  }
-
-  // Focus a specific terminal type for the active workspace
-  const handleFocusTerminal = async (type: 'claude' | 'happy' | 'terminal') => {
-    const ws = workspaces.find(w => w.id === activeWorkspaceId)
-    if (!ws) return
-
-    if (type === 'terminal') {
-      await window.electronAPI.shell.focusTerminalAtPath(ws.folderPath)
-    } else {
-      await window.electronAPI.shell.focusAgent(ws.folderPath, type)
-    }
-  }
-
-  // Refresh terminal status for active workspace
-  const refreshTerminalStatus = async () => {
-    const ws = workspaces.find(w => w.id === activeWorkspaceId)
-    if (!ws) return
-    const status = await window.electronAPI.shell.checkTerminals(ws.folderPath)
-    setTerminalStatus(status)
-  }
-
-  const handleOpenSourceTree = (folderPath: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    window.electronAPI.shell.openWithApp('Sourcetree', folderPath)
   }
 
   const handleOpenWithIde = (folderPath: string, appName: string) => {
     window.electronAPI.shell.openWithApp(appName, folderPath)
     setIdeMenuId(null)
+    setWsContextMenu(null)
+    setWsContextMenuPos(null)
   }
 
-  const handleOpenNativeTerminal = (folderPath: string, e: React.MouseEvent) => {
+  const handleWorkspaceContextMenu = (workspace: Workspace, e: React.MouseEvent) => {
+    e.preventDefault()
     e.stopPropagation()
-    window.electronAPI.shell.openTerminalAtPath(folderPath)
+    setWsContextMenu(workspace.id)
+    setWsContextMenuPos({ x: e.clientX, y: e.clientY })
   }
 
-  // Smart CAgent click handler: check if running first, then focus or show dialog
+  // Agent click: launch Claude or switch to existing Claude terminal
   const handleCAgentClick = async (workspace: Workspace, e: React.MouseEvent) => {
     e.stopPropagation()
+    onSelectWorkspace(workspace.id)
 
-    // Check if agent is already running at this path
-    const result = await window.electronAPI.shell.checkAgentRunning(workspace.folderPath)
-
-    if (result.running && result.type) {
-      // Agent is running, focus on it
-      await window.electronAPI.shell.focusAgent(workspace.folderPath, result.type as 'claude' | 'happy')
+    if (onCreateEmbeddedTerminal) {
+      // Check if a Claude terminal already exists for this workspace
+      const existing = terminalStore.getTerminalsForWorkspace(workspace.id)
+        .find(t => t.type === 'agent' && t.agentType === 'claude')
+      if (existing) {
+        await terminalStore.setActiveTerminal(existing.id)
+      } else {
+        onCreateEmbeddedTerminal(workspace.id, workspace.folderPath, {
+          type: 'agent', agentType: 'claude', initialCommand: 'claude -c'
+        })
+      }
     } else {
-      // No agent running, show selection dialog
-      setTerminalAgentDialogId(workspace.id)
+      // Fallback: external Terminal.app
+      const result = await window.electronAPI.shell.checkAgentRunning(workspace.folderPath)
+      if (result.running && result.type) {
+        await window.electronAPI.shell.focusAgent(workspace.folderPath, result.type as 'claude')
+      } else {
+        window.electronAPI.shell.openTerminalWithCommand(workspace.folderPath, 'claude -c')
+      }
     }
-  }
-
-  const handleTerminalAgentSelect = (folderPath: string, agentType: CodeAgentType) => {
-    const commands: Record<CodeAgentType, string> = {
-      happy: 'happy -c --fork-session',
-      claude: 'claude -c',
-      'claude-chrome': 'claude -c --chrome'
-    }
-    window.electronAPI.shell.openTerminalWithCommand(folderPath, commands[agentType])
-    setTerminalAgentDialogId(null)
-    // Trigger poll after delay so the new agent can be detected
-    setTimeout(pollAgentStatuses, 3000)
   }
 
   const handleRoleClick = (workspaceId: string, e: React.MouseEvent) => {
@@ -550,9 +458,15 @@ export function Sidebar({
     setGroupContextMenuPos(null)
   }
 
-  const handleAgentIndicatorClick = async (workspace: Workspace, status: AgentStatus, e: React.MouseEvent) => {
+  const handleAgentIndicatorClick = async (workspace: Workspace, _status: AgentStatus, e: React.MouseEvent) => {
     e.stopPropagation()
-    await window.electronAPI.shell.focusAgent(workspace.folderPath, status.type)
+    onSelectWorkspace(workspace.id)
+    // Switch to the agent terminal tab in right panel
+    const agentTerm = terminalStore.getTerminalsForWorkspace(workspace.id)
+      .find(t => t.type === 'agent')
+    if (agentTerm) {
+      await terminalStore.setActiveTerminal(agentTerm.id)
+    }
   }
 
   const handleWorkspaceClick = (workspace: Workspace) => {
@@ -623,6 +537,7 @@ export function Sidebar({
             key={workspace.id}
             className={`workspace-item ${workspace.id === activeWorkspaceId ? 'active' : ''} ${draggedIndex === index ? 'dragging' : ''} ${dragOverIndex === index ? 'drag-over' : ''}`}
             onClick={() => handleWorkspaceClick(workspace)}
+            onContextMenu={(e) => handleWorkspaceContextMenu(workspace, e)}
             draggable={editingId !== workspace.id}
             onDragStart={(e) => handleDragStart(index, workspace, e)}
             onDragEnd={handleDragEnd}
@@ -726,20 +641,6 @@ export function Sidebar({
                 >
                   📁
                 </button>
-                <button
-                  className="terminal-btn"
-                  onClick={(e) => handleOpenNativeTerminal(workspace.folderPath, e)}
-                  title="Open in Terminal"
-                >
-                  {'>_'}
-                </button>
-                <button
-                  className="agent-terminal-btn"
-                  onClick={(e) => handleCAgentClick(workspace, e)}
-                  title="Open Code Agent in Terminal"
-                >
-                  CAgent
-                </button>
                 <div className="ide-menu-container" ref={ideMenuId === workspace.id ? ideMenuRef : null}>
                   <button
                     className="ide-btn"
@@ -749,7 +650,7 @@ export function Sidebar({
                     }}
                     title="Open in IDE"
                   >
-                    {"</>"}
+                    {"{}"}
                   </button>
                   {ideMenuId === workspace.id && (
                     <div className="ide-dropdown" onClick={(e) => e.stopPropagation()}>
@@ -776,115 +677,92 @@ export function Sidebar({
                   )}
                 </div>
                 <button
-                  className="remove-btn"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onRemoveWorkspace(workspace.id)
-                  }}
+                  className="agent-launch-btn"
+                  onClick={(e) => handleCAgentClick(workspace, e)}
+                  title={agentStatuses[workspace.id] ? 'Switch to Claude Agent' : 'Launch Claude Agent'}
                 >
-                  ×
+                  {agentStatuses[workspace.id] ? '\u25FC' : '\u25B6'}
                 </button>
               </div>
               </div>
-              {gitInfoMap[workspace.id] && (
-                <div className="workspace-git-row">
-                  <span
-                    className={`workspace-git-badge ${gitInfoMap[workspace.id]!.dirty ? 'dirty' : ''}`}
-                    onClick={(e) => handleOpenSourceTree(workspace.folderPath, e)}
-                    title={`${gitInfoMap[workspace.id]!.branch}${gitInfoMap[workspace.id]!.dirty ? ' (未提交變更)' : ''} — 點擊開啟 SourceTree`}
-                  >
-                    {gitInfoMap[workspace.id]!.dirty && <span className="git-dirty-dot" />}
-                    ⎇ {gitInfoMap[workspace.id]!.branch}
-                  </span>
-                </div>
-              )}
-              {!gitInfoMap[workspace.id] && subRepoMap[workspace.id]?.length > 0 && (
-                <div className="workspace-git-row">
-                  {subRepoMap[workspace.id].map(repo => (
-                    <span
-                      key={repo.path}
-                      className={`workspace-git-badge ${repo.dirty ? 'dirty' : ''}`}
-                      onClick={(e) => handleOpenSourceTree(repo.path, e)}
-                      title={`${repo.name}: ${repo.branch}${repo.dirty ? ' (未提交變更)' : ''} — 點擊開啟 SourceTree`}
-                    >
-                      {repo.dirty && <span className="git-dirty-dot" />}
-                      ⎇ {repo.name}/{repo.branch}
-                    </span>
-                  ))}
-                </div>
-              )}
             </div>
           )
         )}
       </div>
-      {activeWorkspaceId && terminalStatus && (terminalStatus.claude || terminalStatus.happy || terminalStatus.terminal) && (
-        <div className="terminal-switcher">
-          <span className="terminal-switcher-label">Terminals</span>
-          <div className="terminal-switcher-buttons">
-            {terminalStatus.claude && (
-              <button
-                className="terminal-switcher-btn claude"
-                onClick={() => handleFocusTerminal('claude')}
-                title="Focus Claude Agent"
-              >
-                [C]
-              </button>
-            )}
-            {terminalStatus.happy && (
-              <button
-                className="terminal-switcher-btn happy"
-                onClick={() => handleFocusTerminal('happy')}
-                title="Focus Happy Agent"
-              >
-                [H]
-              </button>
-            )}
-            {terminalStatus.terminal && (
-              <button
-                className="terminal-switcher-btn terminal"
-                onClick={() => handleFocusTerminal('terminal')}
-                title="Focus Terminal"
-              >
-                [T]
-              </button>
-            )}
-          </div>
-          <button
-            className="terminal-switcher-refresh"
-            onClick={refreshTerminalStatus}
-            title="Refresh terminal status"
+      {wsContextMenu !== null && wsContextMenuPos && (() => {
+        const ws = workspaces.find(w => w.id === wsContextMenu)
+        if (!ws) return null
+        return (
+          <div
+            className="ws-context-menu"
+            style={{ left: wsContextMenuPos.x, top: wsContextMenuPos.y }}
+            onMouseDown={(e) => e.stopPropagation()}
           >
-            R
-          </button>
+            <button onClick={() => {
+              if (onCreateEmbeddedTerminal) {
+                onCreateEmbeddedTerminal(ws.id, ws.folderPath, { type: 'shell' })
+              } else {
+                window.electronAPI.shell.openTerminalAtPath(ws.folderPath)
+              }
+              onSelectWorkspace(ws.id)
+              setWsContextMenu(null)
+              setWsContextMenuPos(null)
+            }}>
+              Open Terminal
+            </button>
+            <div className="ws-context-menu-divider" />
+            <button onClick={() => {
+              setEditingId(ws.id)
+              setEditValue(ws.alias || ws.name)
+              setWsContextMenu(null)
+              setWsContextMenuPos(null)
+            }}>
+              Rename
+            </button>
+            <button
+              className="ws-context-menu-danger"
+              onClick={() => {
+                onRemoveWorkspace(ws.id)
+                setWsContextMenu(null)
+                setWsContextMenuPos(null)
+              }}
+            >
+              Remove
+            </button>
+          </div>
+        )
+      })()}
+      {runningAgents.length > 0 && (
+        <div className="agent-overview">
+          <div
+            className="agent-overview-header"
+            onClick={() => setAgentPanelOpen(!agentPanelOpen)}
+          >
+            <span className="agent-overview-chevron">{agentPanelOpen ? '\u25BE' : '\u25B8'}</span>
+            <span>Agents</span>
+            <span className="agent-overview-count">{runningAgents.length}</span>
+          </div>
+          {agentPanelOpen && (
+            <div className="agent-overview-list">
+              {runningAgents.map(agent => (
+                <div
+                  key={agent.terminalId}
+                  className="agent-overview-item"
+                  onClick={() => handleAgentOverviewClick(agent)}
+                >
+                  <span className="agent-overview-dot" />
+                  <span className="agent-overview-name">{agent.workspaceName}</span>
+                  <span className="agent-overview-time">{formatElapsed(agent.createdAt)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
       <div className="sidebar-footer">
-        <button className="add-workspace-btn" onClick={onAddWorkspace}>
-          + Add Workspace
-        </button>
-        <div className="sidebar-footer-buttons">
-          <button
-            className={`tiling-btn ${tilingEnabled ? 'active' : ''}`}
-            onClick={handleToggleTiling}
-            title={tilingEnabled ? 'Disable window tiling' : 'Enable window tiling'}
-          >
-            {tilingEnabled ? 'Tiling ON' : 'Tiling'}
-          </button>
-          <button className="settings-btn" onClick={onOpenAbout}>
-            About
-          </button>
-        </div>
+        <button className="add-workspace-btn" onClick={onAddWorkspace}>+ Add Workspace</button>
+        <button className="settings-btn" onClick={onOpenAbout}>Settings</button>
       </div>
-
-      {terminalAgentDialogId && (() => {
-        const ws = workspaces.find(w => w.id === terminalAgentDialogId)
-        return ws ? (
-          <CodeAgentSelectDialog
-            onSelect={(type) => handleTerminalAgentSelect(ws.folderPath, type)}
-            onCancel={() => setTerminalAgentDialogId(null)}
-          />
-        ) : null
-      })()}
     </aside>
   )
 }

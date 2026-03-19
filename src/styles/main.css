@@ -45,11 +45,38 @@ body {
   border-right: none;
 }
 
+/* Resize Handle */
+.resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+  position: relative;
+  z-index: 10;
+  margin-left: -2px;
+  margin-right: -2px;
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -2px;
+  right: -2px;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+  background: var(--accent-color);
+}
+
 /* Sidebar */
 .sidebar {
-  width: 200px;
+  width: 260px;
   min-width: 150px;
-  max-width: 400px;
+  max-width: 600px;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border-color);
   display: flex;
@@ -68,6 +95,7 @@ body {
 .sidebar-tabs {
   display: flex;
   border-bottom: 1px solid var(--border-color);
+  height: 38px;
   overflow-x: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -80,7 +108,7 @@ body {
 .sidebar-tab {
   flex: 1;
   min-width: 0;
-  padding: 10px 6px;
+  padding: 10px 10px;
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
@@ -401,11 +429,6 @@ body {
   cursor: pointer;
 }
 
-.workspace-item-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 
 .workspace-item:hover {
   background: var(--bg-hover);
@@ -434,26 +457,14 @@ body {
   cursor: grabbing;
 }
 
-.workspace-item .remove-btn {
-  opacity: 0;
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 2px;
+
+.workspace-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.workspace-item:hover .remove-btn {
-  opacity: 0.7;
-}
-
-.workspace-item .remove-btn:hover {
-  opacity: 1;
-  background: rgba(255, 255, 255, 0.1);
-}
-
-/* Folder Button - Always visible */
+/* Folder Button */
 .workspace-item .folder-btn {
   opacity: 0.6;
   background: none;
@@ -481,9 +492,9 @@ body {
   border: none;
   color: inherit;
   cursor: pointer;
-  padding: 2px 6px;
+  padding: 2px 4px;
   border-radius: 2px;
-  font-size: 12px;
+  font-size: 11px;
   font-family: monospace;
 }
 
@@ -492,9 +503,44 @@ body {
   background: rgba(255, 255, 255, 0.1);
 }
 
-/* Terminal Button */
-.workspace-item .terminal-btn {
-  opacity: 0.6;
+.ide-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  min-width: 120px;
+  padding: 4px 0;
+}
+
+.ide-dropdown button {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.ide-dropdown button:hover {
+  background: var(--bg-hover);
+}
+
+.ide-dropdown-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0;
+}
+
+/* Agent Launch Button */
+.agent-launch-btn {
+  opacity: 0;
   background: none;
   border: none;
   color: inherit;
@@ -502,28 +548,15 @@ body {
   padding: 2px 6px;
   border-radius: 2px;
   font-size: 12px;
-  font-family: monospace;
+  flex-shrink: 0;
+  transition: opacity 0.15s ease;
 }
 
-.workspace-item .terminal-btn:hover {
-  opacity: 1;
-  background: rgba(255, 255, 255, 0.1);
+.workspace-item:hover .agent-launch-btn {
+  opacity: 0.7;
 }
 
-/* Code Agent Terminal Button */
-.workspace-item .agent-terminal-btn {
-  opacity: 0.6;
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 2px;
-  font-size: 12px;
-  font-family: monospace;
-}
-
-.workspace-item .agent-terminal-btn:hover {
+.workspace-item .agent-launch-btn:hover {
   opacity: 1;
   background: rgba(255, 255, 255, 0.1);
 }
@@ -580,42 +613,6 @@ body {
   background-color: #f59e0b;
   flex-shrink: 0;
   margin-left: 2px;
-}
-
-/* IDE Dropdown Divider */
-.ide-dropdown-divider {
-  height: 1px;
-  background: var(--border-color);
-  margin: 4px 0;
-}
-
-.ide-dropdown {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  z-index: 1000;
-  min-width: 120px;
-  padding: 4px 0;
-}
-
-.ide-dropdown button {
-  display: block;
-  width: 100%;
-  padding: 8px 12px;
-  background: none;
-  border: none;
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.ide-dropdown button:hover {
-  background: var(--bg-hover);
 }
 
 .sidebar-footer {
@@ -745,6 +742,71 @@ body {
   margin-left: 8px;
 }
 
+/* Confirm Dialog (JetBrains-style) */
+.confirm-dialog {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  width: 400px;
+  max-width: 90vw;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.confirm-dialog-header {
+  padding: 18px 20px 0;
+}
+
+.confirm-dialog-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.confirm-dialog-body {
+  padding: 12px 20px 20px;
+}
+
+.confirm-dialog-message {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.confirm-dialog-detail {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin: 8px 0 0;
+}
+
+.confirm-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 20px 16px;
+}
+
+.dialog-btn.danger-btn {
+  padding: 8px 16px;
+  background: var(--danger-color);
+  border: 1px solid var(--danger-color);
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.dialog-btn.danger-btn:hover {
+  opacity: 0.9;
+}
+
+.dialog-btn.danger-btn:focus {
+  outline: 2px solid var(--danger-color);
+  outline-offset: 1px;
+}
+
 .duplicate-dialog-path {
   font-family: monospace;
   font-size: 12px;
@@ -780,40 +842,121 @@ body {
   color: var(--text-primary);
 }
 
-.sidebar-footer-buttons {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.sidebar-footer-buttons .settings-btn {
-  flex: 1;
-  margin-top: 0;
-}
-
-/* Tiling Button */
-.tiling-btn {
-  flex: 1;
-  margin-top: 0;
-  padding: 8px 12px;
-  background: transparent;
+/* Workspace Context Menu */
+.ws-context-menu {
+  position: fixed;
+  background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 13px;
-  transition: all 0.15s ease;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  padding: 4px 0;
+  min-width: 160px;
 }
 
-.tiling-btn:hover {
+.ws-context-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.ws-context-menu button:hover {
+  background: var(--bg-hover);
+}
+
+.ws-context-menu-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0;
+}
+
+.ws-context-menu-danger {
+  color: var(--danger-color) !important;
+}
+
+/* Agent Overview Panel */
+.agent-overview {
+  border-top: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.agent-overview-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.agent-overview-header:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
 
-.tiling-btn.active {
-  background: var(--accent-color);
-  border-color: var(--accent-color);
+.agent-overview-chevron {
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.agent-overview-count {
+  background: #22c55e;
   color: white;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.agent-overview-list {
+  padding: 0 8px 8px;
+}
+
+.agent-overview-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.agent-overview-item:hover {
+  background: var(--bg-hover);
+}
+
+.agent-overview-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #22c55e;
+  flex-shrink: 0;
+}
+
+.agent-overview-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-overview-time {
+  color: var(--text-secondary);
+  font-size: 11px;
+  flex-shrink: 0;
 }
 
 /* Terminal Switcher */
@@ -1092,4 +1235,184 @@ body {
     transform: translateX(0);
     opacity: 1;
   }
+}
+
+/* === Main Panel (embedded terminal) === */
+
+.main-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 400px;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.main-panel-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+/* Git Info Bar (fixed bottom of main panel) */
+.git-info-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #181818;
+  border-top: 1px solid var(--border-color);
+  flex-shrink: 0;
+  height: 100px;
+  overflow-y: auto;
+  flex-wrap: wrap;
+  align-content: flex-start;
+}
+
+.git-info-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-family: 'Menlo', 'Monaco', monospace;
+  color: var(--text-secondary);
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.git-info-badge:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Terminal Tab Bar */
+.terminal-tab-bar {
+  display: flex;
+  align-items: center;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  height: 38px;
+  padding: 0 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-shrink: 0;
+}
+
+.terminal-tab-bar::-webkit-scrollbar { display: none; }
+
+.terminal-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+.terminal-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.terminal-tab.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent-color);
+  background: var(--bg-tertiary);
+}
+
+.terminal-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-tab-close {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 14px;
+  border-radius: 2px;
+  line-height: 1;
+}
+
+.terminal-tab:hover .terminal-tab-close { opacity: 0.6; }
+.terminal-tab-close:hover { opacity: 1 !important; background: rgba(255,255,255,0.1); }
+
+.terminal-tab-new {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.terminal-tab-new:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+/* Terminal Panel Container */
+.terminal-panels {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.terminal-panel-wrapper {
+  position: absolute;
+  inset: 0;
+  display: none;
+}
+
+.terminal-panel-wrapper.active {
+  display: block;
+}
+
+.terminal-panel {
+  width: 100%;
+  height: 100%;
+}
+
+.terminal-panel .xterm {
+  height: 100%;
+  padding: 4px;
+}
+
+.terminal-panels-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: var(--text-secondary);
+}
+
+.terminal-panels-empty button {
+  padding: 8px 16px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.terminal-panels-empty button:hover {
+  background: var(--bg-hover);
 }
