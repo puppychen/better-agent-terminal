@@ -53,6 +53,8 @@ interface PtyInstance {
   cwd: string
   type: 'shell' | 'agent'
   buffer: RingBuffer
+  lastCols: number
+  lastRows: number
 }
 
 export class PtyManager {
@@ -96,7 +98,20 @@ export class PtyManager {
     const buffered = instance.buffer.flush()
     if (buffered.length > 0) {
       this.send('pty:buffer-flushed', id, buffered)
+      // 觸發 SIGWINCH 強制 CLI 全螢幕重繪（解決 partial flush 造成的破圖）
+      if (instance.usePty && instance.lastCols > 0) {
+        instance.process.resize(instance.lastCols, instance.lastRows)
+      }
     }
+  }
+
+  // Resume: reopen IPC gate without flushing buffer (for window refocus)
+  // Discards buffered data from blur period to avoid display glitch
+  resume(id: string): void {
+    if (!this.instances.has(id)) return
+    this.activeSet.add(id)
+    // Clear buffer without sending — blur period data is mostly CLI refresh sequences
+    this.instances.get(id)!.buffer.flush()
   }
 
   deactivate(id: string): void {
@@ -155,7 +170,8 @@ export class PtyManager {
 
         this.instances.set(id, {
           process: ptyProcess, usePty: true, cwd,
-          type: options.type, buffer: new RingBuffer()
+          type: options.type, buffer: new RingBuffer(),
+          lastCols: 120, lastRows: 30
         })
         usedPty = true
       } catch (e) {
@@ -193,7 +209,8 @@ export class PtyManager {
 
         this.instances.set(id, {
           process: childProcess, usePty: false, cwd,
-          type: options.type, buffer: new RingBuffer()
+          type: options.type, buffer: new RingBuffer(),
+          lastCols: 120, lastRows: 30
         })
       } catch (error) {
         console.error('[pty-manager] Failed to create terminal:', error)
@@ -227,6 +244,8 @@ export class PtyManager {
     const instance = this.instances.get(id)
     if (instance && instance.usePty) {
       instance.process.resize(cols, rows)
+      instance.lastCols = cols
+      instance.lastRows = rows
     }
   }
 

@@ -36,6 +36,7 @@ interface ElectronAPI {
     kill: (id: string) => Promise<boolean>
     activate: (id: string) => Promise<void>
     deactivate: (id: string) => Promise<void>
+    resume: (id: string) => Promise<void>
     onOutput: (callback: (id: string, data: string) => void) => () => void
     onExit: (callback: (id: string, exitCode: number) => void) => () => void
     onBufferFlushed: (callback: (id: string, data: string) => void) => () => void

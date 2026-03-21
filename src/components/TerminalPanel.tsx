@@ -215,6 +215,20 @@ export const TerminalPanel = memo(function TerminalPanel({
       return true
     })
 
+    // === Window focus gate ===
+    // 視窗 blur 時暫停 rAF 排程（資料累積在 writeBuf），focus 時恢復
+    // 避免 main process Gate-and-Buffer 的 buffer flush 重播 partial ANSI 導致跑版
+    let windowFocused = document.hasFocus()
+    const handleWindowBlur = () => { windowFocused = false }
+    const handleWindowFocus = () => {
+      windowFocused = true
+      if (writeBuf.length > 0 && writeRaf === null) {
+        writeRaf = requestAnimationFrame(flushWriteBuf)
+      }
+    }
+    window.addEventListener('blur', handleWindowBlur)
+    window.addEventListener('focus', handleWindowFocus)
+
     // === Auto-scroll tracking ===
     // Sticky flag: default to auto-scroll, only disable when user explicitly scrolls up
     let autoScroll = true
@@ -264,10 +278,11 @@ export const TerminalPanel = memo(function TerminalPanel({
 
     // PTY output → xterm（gate 開啟時的即時輸出）
     // scroll 在 flushWriteBuf 的 write callback 中管理
+    // windowFocused === false 時僅累積到 writeBuf，不排程 rAF（省渲染）
     const unsubOutput = window.electronAPI.pty.onOutput((id, data) => {
       if (id !== terminalId) return
       writeBuf += data
-      if (writeRaf === null) {
+      if (windowFocused && writeRaf === null) {
         writeRaf = requestAnimationFrame(flushWriteBuf)
       }
     })
@@ -346,6 +361,8 @@ export const TerminalPanel = memo(function TerminalPanel({
     el.addEventListener('drop', handleDrop)
 
     return () => {
+      window.removeEventListener('blur', handleWindowBlur)
+      window.removeEventListener('focus', handleWindowFocus)
       el.removeEventListener('dragover', handleDragOver)
       el.removeEventListener('drop', handleDrop)
       unsubOutput()

@@ -81,9 +81,10 @@ function AppContent() {
 
     document.addEventListener('keydown', handleKeyDown)
 
-    // Window focus → re-activate current terminal (Gate-and-Buffer)
+    // Window focus — 不再 re-activate（terminal 持續在 activeSet）
+    // renderer 端 TerminalPanel 自行處理 blur/focus 的 rAF 暫停/恢復
     const unsubWindowFocus = window.electronAPI.window?.onFocus(() => {
-      terminalStore.onWindowFocus()
+      // noop — Gate-and-Buffer 僅用於 tab 切換
     })
 
     // Cmd+W → close active terminal tab with confirmation

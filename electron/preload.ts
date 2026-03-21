@@ -30,6 +30,7 @@ const electronAPI = {
     kill: (id: string) => ipcRenderer.invoke('pty:kill', id),
     activate: (id: string) => ipcRenderer.invoke('pty:activate', id),
     deactivate: (id: string) => ipcRenderer.invoke('pty:deactivate', id),
+    resume: (id: string) => ipcRenderer.invoke('pty:resume', id),
     onOutput: (callback: (id: string, data: string) => void) => {
       const handler = (_event: any, id: string, data: string) => callback(id, data)
       ipcRenderer.on('pty:output', handler)

@@ -89,9 +89,10 @@ async function createWindow() {
     mainWindow = null
   })
 
-  // Gate-and-Buffer: window blur → 全部終端停止 IPC 推送
+  // Window blur: 不再 deactivate — renderer 自行暫停 xterm 寫入
+  // Gate-and-Buffer (deactivateAll/activate) 僅用於 tab 切換
   mainWindow.on('blur', () => {
-    ptyManager?.deactivateAll()
+    // noop — IPC 持續流動，renderer 端暫停 rAF 排程
   })
 
   // Window focus → 通知 renderer 恢復 active terminal
@@ -888,4 +889,8 @@ ipcMain.handle('pty:activate', async (_event, id: string) => {
 
 ipcMain.handle('pty:deactivate', async (_event, id: string) => {
   ptyManager?.deactivate(id)
+})
+
+ipcMain.handle('pty:resume', async (_event, id: string) => {
+  ptyManager?.resume(id)
 })
