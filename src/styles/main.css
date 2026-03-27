@@ -1095,7 +1095,7 @@ body {
 }
 
 .about-panel {
-  width: 380px;
+  width: 420px;
 }
 
 .about-content {
@@ -1171,6 +1171,156 @@ body {
 
 .about-credits p {
   margin: 0;
+}
+
+/* WebSocket Settings */
+.ws-toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ws-toggle-switch {
+  width: 44px;
+  height: 24px;
+  border-radius: 12px;
+  border: none;
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.2s;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.ws-toggle-switch.active {
+  background: #22c55e;
+}
+
+.ws-toggle-switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ws-toggle-knob {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  transition: left 0.2s;
+}
+
+.ws-toggle-switch.active .ws-toggle-knob {
+  left: 23px;
+}
+
+.ws-status-info {
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-top: 8px;
+}
+
+.ws-status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+  font-size: 12px;
+}
+
+.ws-status-row:not(:last-child) {
+  border-bottom: 1px solid var(--border-color);
+}
+
+.ws-status-label {
+  color: var(--text-secondary);
+}
+
+.ws-status-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.ws-token-value {
+  gap: 4px;
+}
+
+.ws-token-text {
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-token-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.ws-token-btn:hover {
+  color: var(--text-primary);
+}
+
+.ws-hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin: 8px 0 0;
+  line-height: 1.4;
+}
+
+/* WebSocket dot (shared) */
+.ws-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.ws-dot-on {
+  background: #22c55e;
+  box-shadow: 0 0 4px #22c55e80;
+}
+
+.ws-dot-off {
+  background: var(--text-secondary);
+}
+
+/* Sidebar WS indicator */
+.ws-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.ws-indicator-label {
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.ws-indicator-count {
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
 }
 
 /* Toast Notifications */
@@ -1269,10 +1419,10 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: 13px;
   font-family: 'Menlo', 'Monaco', monospace;
   color: var(--text-secondary);
-  padding: 2px 8px;
+  padding: 3px 8px;
   border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
@@ -1281,6 +1431,26 @@ body {
 .git-info-badge:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.git-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  font-size: 11px;
+}
+
+.git-stat-files {
+  color: #e0a458;
+}
+
+.git-stat-ins {
+  color: #7bbda4;
+}
+
+.git-stat-del {
+  color: #cb6077;
 }
 
 /* Terminal Tab Bar */

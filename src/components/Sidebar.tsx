@@ -265,7 +265,7 @@ export function Sidebar({
         await terminalStore.setActiveTerminal(existing.id)
       } else {
         onCreateEmbeddedTerminal(workspace.id, workspace.folderPath, {
-          type: 'agent', agentType: 'claude', initialCommand: 'claude -c'
+          type: 'agent', agentType: 'claude', initialCommand: 'claude -c --permission-mode bypassPermissions'
         })
       }
     } else {
@@ -274,7 +274,7 @@ export function Sidebar({
       if (result.running && result.type) {
         await window.electronAPI.shell.focusAgent(workspace.folderPath, result.type as 'claude')
       } else {
-        window.electronAPI.shell.openTerminalWithCommand(workspace.folderPath, 'claude -c')
+        window.electronAPI.shell.openTerminalWithCommand(workspace.folderPath, 'claude -c --permission-mode bypassPermissions')
       }
     }
   }
@@ -727,10 +727,56 @@ export function Sidebar({
           )}
         </div>
       )}
+      <WsStatusIndicator />
       <div className="sidebar-footer">
         <button className="add-workspace-btn" onClick={onAddWorkspace}>+ Add Workspace</button>
         <button className="settings-btn" onClick={onOpenAbout}>Settings</button>
       </div>
     </aside>
+  )
+}
+
+/** Sidebar 底部的 WS Server 狀態指示（僅在啟用時顯示） */
+function WsStatusIndicator() {
+  const [running, setRunning] = useState(false)
+  const [clientCount, setClientCount] = useState(0)
+
+  useEffect(() => {
+    let mounted = true
+
+    // 初始狀態
+    window.electronAPI.ws?.getStatus?.().then(status => {
+      if (mounted) {
+        setRunning(status.running)
+        setClientCount(status.clientCount)
+      }
+    }).catch(() => {})
+
+    // 事件驅動：WS 啟停 + client 數量變化
+    const unsubStatus = window.electronAPI.ws?.onStatusChange?.((on) => {
+      if (mounted) {
+        setRunning(on)
+        if (!on) setClientCount(0)
+      }
+    })
+    const unsubClient = window.electronAPI.ws?.onClientChange?.((count) => {
+      if (mounted) setClientCount(count)
+    })
+
+    return () => {
+      mounted = false
+      unsubStatus?.()
+      unsubClient?.()
+    }
+  }, [])
+
+  if (!running) return null
+
+  return (
+    <div className="ws-indicator" title={`WebSocket: ${clientCount} client(s) connected`}>
+      <span className="ws-dot ws-dot-on" />
+      <span className="ws-indicator-label">WS</span>
+      {clientCount > 0 && <span className="ws-indicator-count">{clientCount}</span>}
+    </div>
   )
 }

@@ -14,7 +14,7 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron',
             rollupOptions: {
-              external: ['node-pty']
+              external: ['node-pty', 'ws', 'bufferutil', 'utf-8-validate', 'strip-ansi']
             }
           }
         }
@@ -40,7 +40,7 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
-      external: ['node-pty']
+      external: ['node-pty', 'ws']
     }
   }
 })

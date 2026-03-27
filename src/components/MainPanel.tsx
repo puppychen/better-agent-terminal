@@ -6,6 +6,9 @@ import type { TerminalState } from '../types'
 interface GitInfo {
   branch: string
   dirty: boolean
+  filesChanged: number
+  insertions: number
+  deletions: number
 }
 
 interface SubRepoInfo {
@@ -166,6 +169,13 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
           >
             {gitInfo.dirty && <span className="git-dirty-dot" />}
             ⎇ {gitInfo.branch}
+            {gitInfo.dirty && (
+              <span className="git-stats">
+                {gitInfo.filesChanged > 0 && <span className="git-stat-files">M{gitInfo.filesChanged}</span>}
+                {gitInfo.insertions > 0 && <span className="git-stat-ins">+{gitInfo.insertions}</span>}
+                {gitInfo.deletions > 0 && <span className="git-stat-del">-{gitInfo.deletions}</span>}
+              </span>
+            )}
           </span>
         )}
         {!gitInfo && subRepos.map(repo => (

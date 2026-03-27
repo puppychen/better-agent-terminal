@@ -1,6 +1,10 @@
 import { BrowserWindow } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
+import { basename } from 'path'
 import type { CreatePtyOptions } from '../src/types'
+import type { WsServer } from './ws-server'
+import type { SessionInfo } from './ws-types'
+import { PermissionDetector } from './ws-permission-detector'
 
 // node-pty 動態載入：優先使用，不可用時 fallback child_process
 let pty: typeof import('node-pty') | null = null
@@ -55,15 +59,26 @@ interface PtyInstance {
   buffer: RingBuffer
   lastCols: number
   lastRows: number
+  startedAt: string           // ISO 8601
+  permissionDetector?: PermissionDetector
 }
 
 export class PtyManager {
   private instances: Map<string, PtyInstance> = new Map()
   private activeSet: Set<string> = new Set()
   private mainWindow: BrowserWindow | null = null
+  private wsServer: WsServer | null = null
 
   setMainWindow(win: BrowserWindow | null): void {
     this.mainWindow = win
+  }
+
+  getMainWindow(): BrowserWindow | null {
+    return this.mainWindow
+  }
+
+  setWsServer(ws: WsServer | null): void {
+    this.wsServer = ws
   }
 
   private send(channel: string, ...args: unknown[]): void {
@@ -87,6 +102,12 @@ export class PtyManager {
     if (this.activeSet.has(id)) {
       this.send('pty:output', id, data)
     }
+
+    // Permission 偵測（agent session only）
+    instance.permissionDetector?.feedOutput(data)
+
+    // WS 廣播（不受 activeSet 限制 — WS 訂閱者獨立管理）
+    this.wsServer?.broadcastOutput(id, data)
   }
 
   activate(id: string): void {
@@ -164,15 +185,24 @@ export class PtyManager {
 
         ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
           this.send('pty:exit', id, exitCode)
+          this.wsServer?.broadcastExit(id, exitCode)
           this.activeSet.delete(id)
           this.instances.delete(id)
         })
 
-        this.instances.set(id, {
+        const inst = {
           process: ptyProcess, usePty: true, cwd,
           type: options.type, buffer: new RingBuffer(),
-          lastCols: 120, lastRows: 30
-        })
+          lastCols: 120, lastRows: 30,
+          startedAt: new Date().toISOString()
+        } as PtyInstance
+        if (options.type === 'agent') {
+          inst.permissionDetector = new PermissionDetector(id,
+            (perm) => this.wsServer?.broadcastPermission(id, perm),
+            (res) => this.wsServer?.broadcastPermissionResolved(id, res)
+          )
+        }
+        this.instances.set(id, inst)
         usedPty = true
       } catch (e) {
         console.warn('[pty-manager] node-pty spawn failed, falling back:', e)
@@ -198,7 +228,9 @@ export class PtyManager {
         })
 
         childProcess.on('exit', (exitCode: number | null) => {
-          this.send('pty:exit', id, exitCode ?? 0)
+          const code = exitCode ?? 0
+          this.send('pty:exit', id, code)
+          this.wsServer?.broadcastExit(id, code)
           this.activeSet.delete(id)
           this.instances.delete(id)
         })
@@ -207,11 +239,19 @@ export class PtyManager {
           this.handleOutput(id, `\r\n[Error: ${error.message}]\r\n`)
         })
 
-        this.instances.set(id, {
+        const inst2 = {
           process: childProcess, usePty: false, cwd,
           type: options.type, buffer: new RingBuffer(),
-          lastCols: 120, lastRows: 30
-        })
+          lastCols: 120, lastRows: 30,
+          startedAt: new Date().toISOString()
+        } as PtyInstance
+        if (options.type === 'agent') {
+          inst2.permissionDetector = new PermissionDetector(id,
+            (perm) => this.wsServer?.broadcastPermission(id, perm),
+            (res) => this.wsServer?.broadcastPermissionResolved(id, res)
+          )
+        }
+        this.instances.set(id, inst2)
       } catch (error) {
         console.error('[pty-manager] Failed to create terminal:', error)
         return false
@@ -225,12 +265,18 @@ export class PtyManager {
       }, 1500)
     }
 
+    // 通知 WS clients session 列表變化
+    this.wsServer?.broadcastSessionList()
+
     return true
   }
 
   write(id: string, data: string): void {
     const instance = this.instances.get(id)
     if (!instance) return
+
+    // 偵測本地 stdin 的 y/n（permission 解決）
+    instance.permissionDetector?.feedStdin(data)
 
     if (instance.usePty) {
       instance.process.write(data)
@@ -253,6 +299,7 @@ export class PtyManager {
     const instance = this.instances.get(id)
     if (!instance) return false
 
+    instance.permissionDetector?.dispose()
     if (instance.usePty) {
       instance.process.kill()
     } else {
@@ -260,6 +307,10 @@ export class PtyManager {
     }
     this.activeSet.delete(id)
     this.instances.delete(id)
+
+    // 通知 WS clients session 列表變化
+    this.wsServer?.broadcastSessionList()
+
     return true
   }
 
@@ -267,5 +318,48 @@ export class PtyManager {
     for (const [id] of this.instances) {
       this.kill(id)
     }
+  }
+
+  // === WS Server 查詢介面 ===
+
+  /** 取得所有 session 列表（供 WS server） */
+  getSessionList(): SessionInfo[] {
+    return Array.from(this.instances.entries()).map(([id, inst]) => {
+      const name = basename(inst.cwd)
+      const tag = inst.type === 'agent' ? 'agent' : 'shell'
+      return {
+        sessionId: id,
+        projectName: name,
+        projectPath: inst.cwd,
+        type: inst.type,
+        label: `${name} [${tag}]`,
+        status: 'running' as const,
+        startedAt: inst.startedAt,
+        pid: inst.usePty ? (inst.process.pid ?? 0) : (inst.process as ChildProcess).pid ?? 0,
+        metadata: { type: inst.type }
+      }
+    })
+  }
+
+  /** 檢查 session 是否存在 */
+  hasSession(id: string): boolean {
+    return this.instances.has(id)
+  }
+
+  /** 遠端寫入 pty stdin（由 WS input 觸發） */
+  writeFromRemote(id: string, data: string): { success: boolean; bytesWritten?: number; error?: string } {
+    const instance = this.instances.get(id)
+    if (!instance) return { success: false, error: 'SESSION_NOT_FOUND' }
+    try {
+      this.write(id, data)
+      return { success: true, bytesWritten: data.length }
+    } catch (e) {
+      return { success: false, error: 'PTY_WRITE_ERROR' }
+    }
+  }
+
+  /** 取得指定 session 的 PermissionDetector（供 WS permission resolve） */
+  getPermissionDetector(id: string): PermissionDetector | undefined {
+    return this.instances.get(id)?.permissionDetector
   }
 }

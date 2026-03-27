@@ -47,6 +47,20 @@ const electronAPI = {
       return () => { ipcRenderer.removeListener('pty:buffer-flushed', handler) }
     }
   },
+  ws: {
+    getStatus: () => ipcRenderer.invoke('ws:get-status'),
+    toggle: (enabled: boolean) => ipcRenderer.invoke('ws:toggle', enabled),
+    onClientChange: (callback: (count: number) => void) => {
+      const handler = (_event: any, count: number) => callback(count)
+      ipcRenderer.on('ws:client-change', handler)
+      return () => { ipcRenderer.removeListener('ws:client-change', handler) }
+    },
+    onStatusChange: (callback: (running: boolean) => void) => {
+      const handler = (_event: any, running: boolean) => callback(running)
+      ipcRenderer.on('ws:status-change', handler)
+      return () => { ipcRenderer.removeListener('ws:status-change', handler) }
+    }
+  },
   window: {
     onFocus: (callback: () => void) => {
       const handler = () => callback()

@@ -26,7 +26,7 @@ interface ElectronAPI {
     focusTerminalAtPath: (path: string) => Promise<boolean>
     checkTerminals: (path: string) => Promise<{ claude: boolean; happy: boolean; terminal: boolean }>
     getAllTerminalStates: () => Promise<Array<{ tty: string; busy: boolean; processes: string[]; cwd?: string }>>
-    getGitInfoBatch: (paths: string[]) => Promise<Record<string, { branch: string; dirty: boolean } | null>>
+    getGitInfoBatch: (paths: string[]) => Promise<Record<string, { branch: string; dirty: boolean; filesChanged: number; insertions: number; deletions: number } | null>>
     getSubReposBatch: (paths: string[]) => Promise<Record<string, SubRepoInfo[]>>
   }
   pty: {
@@ -40,6 +40,18 @@ interface ElectronAPI {
     onOutput: (callback: (id: string, data: string) => void) => () => void
     onExit: (callback: (id: string, exitCode: number) => void) => () => void
     onBufferFlushed: (callback: (id: string, data: string) => void) => () => void
+  }
+  ws: {
+    getStatus: () => Promise<{
+      running: boolean
+      port: number | null
+      token: string | null
+      clientCount: number
+      host: string
+    }>
+    toggle: (enabled: boolean) => Promise<void>
+    onClientChange: (callback: (count: number) => void) => () => void
+    onStatusChange: (callback: (running: boolean) => void) => () => void
   }
   window: {
     onFocus: (callback: () => void) => () => void

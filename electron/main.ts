@@ -1,7 +1,10 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from 'electron'
 import path from 'path'
+import os from 'os'
 import fs from 'fs'
 import { PtyManager } from './pty-manager'
+import { WsServer } from './ws-server'
+import type { WsServerConfig } from './ws-types'
 
 // userData migration: Better Agent Terminal → Better Agent Workspace
 // Dev mode uses package.json "name" (lowercase), production uses "productName" (title case)
@@ -22,6 +25,26 @@ if (!fs.existsSync(newUserDataDir)) {
 
 let mainWindow: BrowserWindow | null = null
 let ptyManager: PtyManager | null = null
+let wsServer: WsServer | null = null
+
+// === WebSocket Config（模組層級，供 IPC handler 存取） ===
+const wsSettingsPath = path.join(os.homedir(), '.claude', 'better-agent', 'ws-settings.json')
+let wsConfig: WsServerConfig = {
+  enabled: false,
+  port: 19836,
+  host: '127.0.0.1',
+  tokenPath: path.join(os.homedir(), '.claude', 'better-agent', 'ws-auth.json')
+}
+try {
+  if (fs.existsSync(wsSettingsPath)) {
+    const saved = JSON.parse(fs.readFileSync(wsSettingsPath, 'utf-8'))
+    // Validate saved settings before applying
+    if (typeof saved.enabled === 'boolean') wsConfig.enabled = saved.enabled
+    const port = Number(saved.port)
+    if (port >= 1024 && port <= 65535) wsConfig.port = port
+    if (saved.host === '127.0.0.1' || saved.host === '0.0.0.0') wsConfig.host = saved.host
+  }
+} catch { /* ignore parse errors */ }
 let forceQuit = false
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
@@ -82,6 +105,10 @@ async function createWindow() {
   }
 
   mainWindow.on('closed', () => {
+    if (wsServer) {
+      wsServer.stop()
+      wsServer = null
+    }
     if (ptyManager) {
       ptyManager.dispose()
       ptyManager = null
@@ -104,6 +131,13 @@ async function createWindow() {
 
   ptyManager = new PtyManager()
   ptyManager.setMainWindow(mainWindow)
+
+  // === WebSocket Server（預設關閉，wsConfig 已在模組層級初始化） ===
+  if (wsConfig.enabled) {
+    wsServer = new WsServer(wsConfig, ptyManager)
+    ptyManager.setWsServer(wsServer)
+    wsServer.start()
+  }
 
   // === Custom application menu ===
   // Cmd+W → close active terminal tab (not window)
@@ -817,20 +851,37 @@ async function getSubReposForPath(folderPath: string): Promise<SubRepoInfo[]> {
   })
 }
 
-// Git info for a single path: combine branch + dirty into 1 shell command
-async function getGitInfoForPath(folderPath: string): Promise<{ branch: string; dirty: boolean } | null> {
+// Git info for a single path: branch + dirty + diff stats in 1 shell call
+async function getGitInfoForPath(folderPath: string): Promise<{ branch: string; dirty: boolean; filesChanged: number; insertions: number; deletions: number } | null> {
   const { exec } = await import('child_process')
   // Electron launched from Finder has minimal PATH; include common git locations
   const gitPath = '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin'
   return new Promise((resolve) => {
-    const cmd = `cd "${folderPath}" && echo "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" && echo "---" && git status --porcelain 2>/dev/null`
+    const cmd = `cd "${folderPath}" && echo "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" && echo "---" && git status --porcelain 2>/dev/null && echo "---" && git diff --shortstat 2>/dev/null && echo "===" && git diff --cached --shortstat 2>/dev/null`
     exec(cmd, { timeout: 5000, env: { ...process.env, PATH: `${gitPath}:${process.env.PATH || ''}` } }, (err, stdout) => {
       if (err) { resolve(null); return }
       const parts = stdout.split('---\n')
       const branch = (parts[0] || '').trim()
       if (!branch) { resolve(null); return }
-      const dirty = (parts[1] || '').trim().length > 0
-      resolve({ branch, dirty })
+      const dirty = (parts[1] || '').split('---')[0].trim().length > 0
+      const filesChanged = ((parts[1] || '').split('---')[0].trim().split('\n').filter(Boolean)).length
+
+      // Parse shortstat: "N files changed, N insertions(+), N deletions(-)"
+      const statPart = (parts[2] || '')
+      const parseShortstat = (s: string) => {
+        const ins = s.match(/(\d+)\s+insertion/)
+        const del = s.match(/(\d+)\s+deletion/)
+        return { insertions: ins ? parseInt(ins[1]) : 0, deletions: del ? parseInt(del[1]) : 0 }
+      }
+      const statSections = statPart.split('===')
+      const unstaged = parseShortstat(statSections[0] || '')
+      const staged = parseShortstat(statSections[1] || '')
+
+      resolve({
+        branch, dirty, filesChanged,
+        insertions: unstaged.insertions + staged.insertions,
+        deletions: unstaged.deletions + staged.deletions
+      })
     })
   })
 }
@@ -893,4 +944,43 @@ ipcMain.handle('pty:deactivate', async (_event, id: string) => {
 
 ipcMain.handle('pty:resume', async (_event, id: string) => {
   ptyManager?.resume(id)
+})
+
+// === WebSocket IPC Handlers ===
+
+ipcMain.handle('ws:get-status', async () => ({
+  running: wsServer?.isRunning() ?? false,
+  port: wsServer?.getPort() ?? null,
+  token: wsServer?.getToken() ?? null,
+  clientCount: wsServer?.getClientCount() ?? 0,
+  host: wsConfig?.host ?? '127.0.0.1'
+}))
+
+ipcMain.handle('ws:toggle', async (_event, enabled: unknown) => {
+  if (!ptyManager) return
+  const shouldEnable = enabled === true
+
+  if (shouldEnable && !wsServer) {
+    wsServer = new WsServer(wsConfig, ptyManager)
+    ptyManager.setWsServer(wsServer)
+    wsServer.start()
+  } else if (!shouldEnable && wsServer) {
+    wsServer.stop()
+    ptyManager.setWsServer(null)
+    wsServer = null
+  }
+
+  // 通知 renderer WS 狀態變化（Settings toggle → Sidebar indicator 同步）
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('ws:status-change', shouldEnable)
+  }
+
+  // 持久化設定
+  const settingsPath = path.join(os.homedir(), '.claude', 'better-agent', 'ws-settings.json')
+  const settingsDir = path.dirname(settingsPath)
+  if (!fs.existsSync(settingsDir)) {
+    fs.mkdirSync(settingsDir, { recursive: true })
+  }
+  const settings = { enabled: shouldEnable, port: wsConfig.port, host: wsConfig.host }
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
 })
