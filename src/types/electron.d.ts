@@ -5,6 +5,9 @@ interface SubRepoInfo {
   path: string
   branch: string
   dirty: boolean
+  filesChanged: number
+  insertions: number
+  deletions: number
 }
 
 interface ElectronAPI {

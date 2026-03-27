@@ -818,31 +818,50 @@ interface SubRepoInfo {
   path: string
   branch: string
   dirty: boolean
+  filesChanged: number
+  insertions: number
+  deletions: number
 }
 
 async function getSubReposForPath(folderPath: string): Promise<SubRepoInfo[]> {
   const { exec } = await import('child_process')
   const gitPath = '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin'
   return new Promise((resolve) => {
+    // 單一 shell 迴圈：branch + porcelain + shortstat 一次完成，每個 sub-repo 只 fork 一次 exec
     const cmd = `for d in "${folderPath}"/*/; do
       if [ -d "$d/.git" ]; then
         name=$(basename "$d")
         branch=$(cd "$d" && git rev-parse --abbrev-ref HEAD 2>/dev/null)
-        if [ -n "$(cd "$d" && git status --porcelain 2>/dev/null)" ]; then dirty="true"; else dirty="false"; fi
-        echo "$name|||$d|||$branch|||$dirty"
+        porcelain=$(cd "$d" && git status --porcelain 2>/dev/null)
+        if [ -n "$porcelain" ]; then dirty="true"; else dirty="false"; fi
+        fc=$(echo "$porcelain" | grep -c '.' 2>/dev/null || echo 0)
+        stats=$(cd "$d" && git diff --shortstat 2>/dev/null)
+        cstats=$(cd "$d" && git diff --cached --shortstat 2>/dev/null)
+        echo "$name|||$d|||$branch|||$dirty|||$fc|||$stats====$cstats"
       fi
     done`
     exec(cmd, { timeout: 10000, env: { ...process.env, PATH: `${gitPath}:${process.env.PATH || ''}` } }, (err, stdout) => {
       if (err || !stdout.trim()) { resolve([]); return }
+      const parseShortstat = (s: string) => {
+        const ins = s.match(/(\d+)\s+insertion/)
+        const del = s.match(/(\d+)\s+deletion/)
+        return { insertions: ins ? parseInt(ins[1]) : 0, deletions: del ? parseInt(del[1]) : 0 }
+      }
       const repos: SubRepoInfo[] = []
       for (const line of stdout.trim().split('\n')) {
-        const [name, repoPath, branch, dirty] = line.split('|||')
+        const [name, repoPath, branch, dirty, fc, statsPart] = line.split('|||')
         if (name && branch) {
+          const sections = (statsPart || '').split('====')
+          const unstaged = parseShortstat(sections[0] || '')
+          const staged = parseShortstat(sections[1] || '')
           repos.push({
             name,
             path: repoPath.replace(/\/$/, ''),
             branch,
-            dirty: dirty === 'true'
+            dirty: dirty === 'true',
+            filesChanged: parseInt(fc) || 0,
+            insertions: unstaged.insertions + staged.insertions,
+            deletions: unstaged.deletions + staged.deletions
           })
         }
       }

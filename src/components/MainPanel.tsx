@@ -16,6 +16,9 @@ interface SubRepoInfo {
   path: string
   branch: string
   dirty: boolean
+  filesChanged: number
+  insertions: number
+  deletions: number
 }
 
 interface MainPanelProps {
@@ -187,6 +190,13 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
           >
             {repo.dirty && <span className="git-dirty-dot" />}
             ⎇ {repo.name}/{repo.branch}
+            {repo.dirty && (
+              <span className="git-stats">
+                {repo.filesChanged > 0 && <span className="git-stat-files">M{repo.filesChanged}</span>}
+                {repo.insertions > 0 && <span className="git-stat-ins">+{repo.insertions}</span>}
+                {repo.deletions > 0 && <span className="git-stat-del">-{repo.deletions}</span>}
+              </span>
+            )}
           </span>
         ))}
       </div>
