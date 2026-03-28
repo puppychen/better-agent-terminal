@@ -1540,11 +1540,11 @@ body {
 .terminal-panel-wrapper {
   position: absolute;
   inset: 0;
-  display: none;
+  visibility: hidden;
 }
 
 .terminal-panel-wrapper.active {
-  display: block;
+  visibility: visible;
 }
 
 .terminal-panel {

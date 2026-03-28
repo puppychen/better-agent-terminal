@@ -174,7 +174,31 @@ export const TerminalPanel = memo(function TerminalPanel({
       // Ctrl+Tab / Ctrl+Shift+Tab → 切換 terminal tab
       if (event.ctrlKey && event.key === 'Tab') {
         event.preventDefault()
+        const vp = containerRef.current?.querySelector('.xterm-viewport') as HTMLElement | null
+        const buf = terminalRef.current?.buffer.active
+        console.log('[ctrl+tab] BEFORE:', {
+          scrollTop: vp?.scrollTop,
+          scrollHeight: vp?.scrollHeight,
+          clientHeight: vp?.clientHeight,
+          ybase: buf?.baseY,
+          ydisp: buf?.viewportY,
+          display: containerRef.current?.parentElement?.style.display,
+          offsetParent: !!vp?.offsetParent
+        })
         onCycleTabRef.current?.(event.shiftKey ? -1 : 1)
+        setTimeout(() => {
+          const vp2 = containerRef.current?.querySelector('.xterm-viewport') as HTMLElement | null
+          const buf2 = terminalRef.current?.buffer.active
+          console.log('[ctrl+tab] AFTER 100ms:', {
+            scrollTop: vp2?.scrollTop,
+            scrollHeight: vp2?.scrollHeight,
+            clientHeight: vp2?.clientHeight,
+            ybase: buf2?.baseY,
+            ydisp: buf2?.viewportY,
+            display: containerRef.current?.parentElement?.style.display,
+            offsetParent: !!vp2?.offsetParent
+          })
+        }, 100)
         return false
       }
       // Shift+Enter → 送 ESC+CR（等同 Option+Enter），讓 Claude CLI 換行
@@ -380,8 +404,6 @@ export const TerminalPanel = memo(function TerminalPanel({
   // isActive 變化時：resize + focus + WebGL LRU touch
   useEffect(() => {
     if (isActive && terminalRef.current) {
-      // Touch LRU — 保護此 terminal 的 WebGL context 不被淘汰
-      // 若已被淘汰（超過 12 個時），重新 attach
       if (!webglRegistry.has(terminalId)) {
         attachWebgl(terminalId, terminalRef.current)
       } else {

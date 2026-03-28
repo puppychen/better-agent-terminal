@@ -114,15 +114,11 @@ export class PtyManager {
     if (!this.instances.has(id)) return
     this.activeSet.add(id)
 
-    // Flush 累積的 buffer
+    // Flush 累積的 buffer（不送 SIGWINCH — SIGWINCH 會觸發 CLI 重繪改變內容位置）
     const instance = this.instances.get(id)!
     const buffered = instance.buffer.flush()
     if (buffered.length > 0) {
       this.send('pty:buffer-flushed', id, buffered)
-      // 觸發 SIGWINCH 強制 CLI 全螢幕重繪（解決 partial flush 造成的破圖）
-      if (instance.usePty && instance.lastCols > 0) {
-        instance.process.resize(instance.lastCols, instance.lastRows)
-      }
     }
   }
 

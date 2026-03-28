@@ -55,17 +55,13 @@ class TerminalStore {
     const ok = await window.electronAPI.pty.create(ptyOptions)
     if (!ok) return null
 
-    // Deactivate previous, activate new (component stays mounted, listeners ready)
-    if (this.state.activeTerminalId) {
-      await window.electronAPI.pty.deactivate(this.state.activeTerminalId)
-    }
-
     this.state = {
       terminals: [...this.state.terminals, instance],
       activeTerminalId: id
     }
     this.notify()
 
+    // activate 只是加入 activeSet 讓 IPC 開始流動（不 deactivate 舊的）
     await window.electronAPI.pty.activate(id)
     return instance
   }
@@ -74,14 +70,10 @@ class TerminalStore {
     const prev = this.state.activeTerminalId
     if (prev === id) return
 
-    if (prev) {
-      await window.electronAPI.pty.deactivate(prev)
-    }
-
+    // 不 deactivate/activate — 所有 terminal 永遠在 activeSet，持續接收 IPC
+    // 搭配 visibility:hidden CSS，切 tab 時畫面是最新狀態，零 replay 零 SIGWINCH
     this.state = { ...this.state, activeTerminalId: id }
     this.notify()
-
-    await window.electronAPI.pty.activate(id)
   }
 
   async killTerminal(id: string): Promise<void> {
