@@ -272,6 +272,8 @@ export const TerminalPanel = memo(function TerminalPanel({
     let writeBuf = ''
     let writeRaf: number | null = null
     let scrollPending = false
+    let writeCount = 0
+    const WEBGL_REBUILD_INTERVAL = 5000  // 每 5000 次 write 重建 WebGL atlas（約 8-10 分鐘活躍輸出）
 
     const flushWriteBuf = () => {
       writeRaf = null
@@ -285,6 +287,14 @@ export const TerminalPanel = memo(function TerminalPanel({
       if (writeBuf.length === 0) return
       const data = writeBuf
       writeBuf = ''
+
+      // 定期重建 WebGL font atlas — 防止 CJK 字元累積導致 atlas 損壞
+      writeCount++
+      if (writeCount >= WEBGL_REBUILD_INTERVAL) {
+        writeCount = 0
+        detachWebgl(terminalId)
+        attachWebgl(terminalId, terminal)
+      }
 
       const isNormal = terminal.buffer.active.type === 'normal'
 

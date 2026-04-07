@@ -187,6 +187,15 @@ export function Sidebar({
     return statuses
   }, [workspaces, embeddedTerminals])
 
+  // 計算每個 workspace 的 unread agent terminal 數
+  const unreadCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const t of embeddedTerminals.terminals) {
+      if (t.unread) counts[t.workspaceId] = (counts[t.workspaceId] || 0) + 1
+    }
+    return counts
+  }, [embeddedTerminals])
+
   // Count agents per group (must be after agentStatuses)
   const groupAgentCount = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -200,6 +209,18 @@ export function Sidebar({
     return counts
   }, [groups, workspaces, agentStatuses])
 
+  // 計算每個 group 是否有 workspace 含 unread
+  const groupHasUnread = useMemo(() => {
+    const map: Record<string, boolean> = {}
+    workspaces.forEach(ws => {
+      if (unreadCounts[ws.id] > 0) {
+        const g = ws.group || 'Others'
+        map[g] = true
+      }
+    })
+    return map
+  }, [workspaces, unreadCounts])
+
   // Agent Overview: running agents list
   const runningAgents = useMemo(() => {
     return embeddedTerminals.terminals
@@ -207,11 +228,24 @@ export function Sidebar({
       .map(t => ({
         terminalId: t.id,
         workspaceId: t.workspaceId,
+        unread: !!t.unread,
         workspaceName: workspaces.find(w => w.id === t.workspaceId)?.alias
           || workspaces.find(w => w.id === t.workspaceId)?.name
           || '...'
       }))
   }, [embeddedTerminals, workspaces])
+
+  // 任意 agent 有 unread 時，header 顯示紅色信號
+  const agentOverviewHasUnread = useMemo(
+    () => runningAgents.some(a => a.unread),
+    [runningAgents]
+  )
+
+  // 未讀總數（標在 header）
+  const agentOverviewUnreadCount = useMemo(
+    () => runningAgents.filter(a => a.unread).length,
+    [runningAgents]
+  )
 
   const handleAgentOverviewClick = async (agent: { terminalId: string; workspaceId: string }) => {
     const ws = workspaces.find(w => w.id === agent.workspaceId)
@@ -448,7 +482,7 @@ export function Sidebar({
         {groups.map(group => (
           <button
             key={group}
-            className={`sidebar-tab ${activeGroup === group ? 'active' : ''} ${dragOverGroup === group ? 'drag-over' : ''}`}
+            className={`sidebar-tab ${activeGroup === group ? 'active' : ''} ${dragOverGroup === group ? 'drag-over' : ''} ${groupHasUnread[group] ? 'has-unread' : ''}`}
             onClick={() => setActiveGroup(group)}
             onDoubleClick={(e) => handleGroupDoubleClick(group, e)}
             onContextMenu={(e) => handleGroupContextMenu(group, e)}
@@ -522,6 +556,15 @@ export function Sidebar({
                   title={`${agentStatuses[workspace.id]!.type} running`}
                   onClick={(e) => handleAgentIndicatorClick(workspace, agentStatuses[workspace.id]!, e)}
                 />
+              )}
+              {/* Unread notification badge */}
+              {unreadCounts[workspace.id] > 0 && (
+                <span
+                  className="workspace-unread-badge"
+                  title={`${unreadCounts[workspace.id]} unread notification(s)`}
+                >
+                  {unreadCounts[workspace.id]}
+                </span>
               )}
               <div
                 className="workspace-item-info"
@@ -702,7 +745,7 @@ export function Sidebar({
         )
       })()}
       {runningAgents.length > 0 && (
-        <div className="agent-overview">
+        <div className={`agent-overview ${agentOverviewHasUnread ? 'has-unread' : ''}`}>
           <div
             className="agent-overview-header"
             onClick={() => setAgentPanelOpen(!agentPanelOpen)}
@@ -710,17 +753,23 @@ export function Sidebar({
             <span className="agent-overview-chevron">{agentPanelOpen ? '\u25BE' : '\u25B8'}</span>
             <span>Agents</span>
             <span className="agent-overview-count">{runningAgents.length}</span>
+            {agentOverviewUnreadCount > 0 && (
+              <span className="agent-overview-unread-badge" title={`${agentOverviewUnreadCount} unread`}>
+                {agentOverviewUnreadCount}
+              </span>
+            )}
           </div>
           {agentPanelOpen && (
             <div className="agent-overview-list">
               {runningAgents.map(agent => (
                 <div
                   key={agent.terminalId}
-                  className="agent-overview-item"
+                  className={`agent-overview-item ${agent.unread ? 'unread' : ''}`}
                   onClick={() => handleAgentOverviewClick(agent)}
                 >
                   <span className="agent-overview-dot" />
                   <span className="agent-overview-name">{agent.workspaceName}</span>
+                  {agent.unread && <span className="agent-overview-unread-dot" title="Unread notification" />}
                 </div>
               ))}
             </div>

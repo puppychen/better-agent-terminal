@@ -38,6 +38,7 @@ export interface TerminalInstance {
   agentType?: CodeAgentType;
   cwd: string;
   createdAt: number;
+  unread?: boolean;
 }
 
 export interface CreatePtyOptions {

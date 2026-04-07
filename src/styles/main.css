@@ -189,6 +189,20 @@ body {
   color: white;
 }
 
+/* B+ 變化版：group 有 unread 時 tab-count 變紅（仍顯示 workspace count） */
+.sidebar-tab.has-unread .tab-count {
+  background: #f44336;
+  color: white;
+  box-shadow: 0 0 6px rgba(244, 67, 54, 0.6);
+  animation: notify-pulse 1.5s ease-in-out 10;
+}
+
+/* 同時讓 dot 也變紅以加強信號 */
+.sidebar-tab.has-unread .tab-agent-dot {
+  background: #f44336;
+  box-shadow: 0 0 4px rgba(244, 67, 54, 0.8);
+}
+
 /* Tab Context Menu */
 .tab-context-menu {
   position: fixed;
@@ -1550,6 +1564,172 @@ body {
 .terminal-panel {
   width: 100%;
   height: 100%;
+}
+
+/* Notification unread dot on terminal tab */
+/* Pulse 10 次（15 秒）後停止，避免長時間佔用 GPU compositor */
+.terminal-tab-unread-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f44336;
+  margin-left: 6px;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px rgba(244, 67, 54, 0.8);
+  animation: notify-pulse 1.5s ease-in-out 10;
+}
+
+/* Agent overview unread indicators */
+.agent-overview-unread-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: #f44336;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 6px;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px rgba(244, 67, 54, 0.6);
+  animation: notify-pulse 1.5s ease-in-out 10;
+}
+
+.agent-overview-unread-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f44336;
+  margin-left: auto;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px rgba(244, 67, 54, 0.8);
+  animation: notify-pulse 1.5s ease-in-out 10;
+}
+
+.agent-overview-item.unread .agent-overview-name {
+  color: #f5f1e6;
+  font-weight: 600;
+}
+
+.agent-overview.has-unread .agent-overview-header {
+  color: #f5f1e6;
+}
+
+/* Notification badge on workspace item (sidebar) */
+.workspace-unread-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: #f44336;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  margin-right: 6px;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px rgba(244, 67, 54, 0.6);
+  animation: notify-pulse 1.5s ease-in-out 10;
+}
+
+@keyframes notify-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* Notification settings — extends ws-toggle/section styles */
+.notify-help-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  cursor: pointer;
+  margin-left: 8px;
+  padding: 0;
+  line-height: 16px;
+  vertical-align: middle;
+}
+
+.notify-help-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.notify-status-installed {
+  color: #22c55e;
+}
+
+.notify-status-missing {
+  color: #f44336;
+}
+
+/* Notify help dialog code blocks */
+.notify-help-block {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 6px 0 10px;
+  font-family: 'Menlo', 'Monaco', monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.notify-help-step {
+  margin-bottom: 14px;
+}
+
+.notify-help-step h4 {
+  font-size: 13px;
+  margin: 0 0 6px;
+  color: var(--text-primary);
+}
+
+.notify-help-step p {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 4px 0 6px;
+  line-height: 1.5;
+}
+
+.notify-help-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.notify-help-actions button {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.notify-help-actions button:hover {
+  background: var(--bg-hover);
+}
+
+.notify-help-recheck-result {
+  font-size: 12px;
+  margin-left: 8px;
 }
 
 .terminal-panel .xterm {

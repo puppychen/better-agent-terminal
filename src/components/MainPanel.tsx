@@ -127,6 +127,7 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
             onClick={() => handleSelectTab(t.id)}
           >
             <span className="terminal-tab-label">{t.label}</span>
+            {t.unread && <span className="terminal-tab-unread-dot" title="Unread notification" />}
             <button
               className="terminal-tab-close"
               onClick={(e) => { e.stopPropagation(); handleCloseTab(t.id) }}

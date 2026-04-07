@@ -81,10 +81,12 @@ function AppContent() {
 
     document.addEventListener('keydown', handleKeyDown)
 
-    // Window focus — 不再 re-activate（terminal 持續在 activeSet）
-    // renderer 端 TerminalPanel 自行處理 blur/focus 的 rAF 暫停/恢復
+    // Window focus — 清除當前 active terminal 的 unread（使用者切回視窗等於看到了）
     const unsubWindowFocus = window.electronAPI.window?.onFocus(() => {
-      // noop — Gate-and-Buffer 僅用於 tab 切換
+      const { activeTerminalId } = terminalStore.getState()
+      if (activeTerminalId) {
+        terminalStore.markUnread(activeTerminalId, false)
+      }
     })
 
     // Cmd+W → close active terminal tab with confirmation
@@ -106,6 +108,35 @@ function AppContent() {
       setShowQuitConfirm(true)
     })
 
+    // 點 macOS 通知 → 切換到對應 workspace + terminal
+    const unsubFocusTerminal = window.electronAPI.notify?.onFocusTerminal?.(({ cwd }) => {
+      const terminals = terminalStore.getState().terminals
+      const target = terminals.find(t => t.cwd === cwd && t.type === 'agent')
+      if (!target) return
+      // 切 workspace
+      if (target.workspaceId !== workspaceStore.getState().activeWorkspaceId) {
+        workspaceStore.setActiveWorkspace(target.workspaceId)
+      }
+      // 切 terminal
+      terminalStore.setActiveTerminal(target.id)
+    })
+
+    // Notify event → mark terminal as unread
+    const unsubNotify = window.electronAPI.notify?.onEvent?.((event) => {
+      const terminals = terminalStore.getState().terminals
+      // 找出 cwd 對應的 agent terminal
+      // 優先找 active workspace 內的，否則找任何符合的
+      const activeWorkspaceId = workspaceStore.getState().activeWorkspaceId
+      const target = terminals.find(t =>
+        t.cwd === event.cwd && t.type === 'agent' && t.workspaceId === activeWorkspaceId
+      ) || terminals.find(t => t.cwd === event.cwd && t.type === 'agent')
+      if (!target) return
+      // 若已是 active terminal 且視窗在前景 → 不標（使用者正在看）
+      const { activeTerminalId } = terminalStore.getState()
+      if (target.id === activeTerminalId && document.hasFocus()) return
+      terminalStore.markUnread(target.id, true)
+    })
+
     // Load saved workspaces on startup
     workspaceStore.load()
 
@@ -114,6 +145,8 @@ function AppContent() {
       unsubWindowFocus?.()
       unsubCloseTab?.()
       unsubQuit?.()
+      unsubNotify?.()
+      unsubFocusTerminal?.()
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [])

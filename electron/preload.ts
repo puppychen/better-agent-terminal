@@ -61,6 +61,22 @@ const electronAPI = {
       return () => { ipcRenderer.removeListener('ws:status-change', handler) }
     }
   },
+  notify: {
+    getStatus: () => ipcRenderer.invoke('notify:get-status'),
+    toggle: (enabled: boolean) => ipcRenderer.invoke('notify:toggle', enabled),
+    checkHookInstalled: () => ipcRenderer.invoke('notify:check-hook-installed'),
+    installHook: () => ipcRenderer.invoke('notify:install-hook'),
+    onEvent: (callback: (event: { cwd: string; event: 'stop' | 'wait'; meta?: { tool?: string; description?: string } }) => void) => {
+      const handler = (_e: any, event: any) => callback(event)
+      ipcRenderer.on('notify:event', handler)
+      return () => { ipcRenderer.removeListener('notify:event', handler) }
+    },
+    onFocusTerminal: (callback: (event: { cwd: string }) => void) => {
+      const handler = (_e: any, event: any) => callback(event)
+      ipcRenderer.on('notify:focus-terminal', handler)
+      return () => { ipcRenderer.removeListener('notify:focus-terminal', handler) }
+    }
+  },
   window: {
     onFocus: (callback: () => void) => {
       const handler = () => callback()

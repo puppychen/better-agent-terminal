@@ -1,10 +1,12 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, Notification } from 'electron'
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
 import { PtyManager } from './pty-manager'
 import { WsServer } from './ws-server'
 import type { WsServerConfig } from './ws-types'
+import { NotifyServer } from './notify-server'
+import type { NotifyConfig, NotifyEvent } from './notify-server'
 
 // userData migration: Better Agent Terminal → Better Agent Workspace
 // Dev mode uses package.json "name" (lowercase), production uses "productName" (title case)
@@ -26,6 +28,23 @@ if (!fs.existsSync(newUserDataDir)) {
 let mainWindow: BrowserWindow | null = null
 let ptyManager: PtyManager | null = null
 let wsServer: WsServer | null = null
+let notifyServer: NotifyServer | null = null
+
+// === Notification Config（模組層級） ===
+const notifySettingsPath = path.join(os.homedir(), '.claude', 'better-agent', 'notify-settings.json')
+const notifyConfig: NotifyConfig = {
+  enabled: false,
+  port: 19837,
+  tokenPath: path.join(os.homedir(), '.claude', 'better-agent', 'notify-auth.txt')
+}
+try {
+  if (fs.existsSync(notifySettingsPath)) {
+    const saved = JSON.parse(fs.readFileSync(notifySettingsPath, 'utf-8'))
+    if (typeof saved.enabled === 'boolean') notifyConfig.enabled = saved.enabled
+    const port = Number(saved.port)
+    if (port >= 1024 && port <= 65535) notifyConfig.port = port
+  }
+} catch { /* ignore parse errors */ }
 
 // === WebSocket Config（模組層級，供 IPC handler 存取） ===
 const wsSettingsPath = path.join(os.homedir(), '.claude', 'better-agent', 'ws-settings.json')
@@ -105,6 +124,10 @@ async function createWindow() {
   }
 
   mainWindow.on('closed', () => {
+    if (notifyServer) {
+      notifyServer.stop()
+      notifyServer = null
+    }
     if (wsServer) {
       wsServer.stop()
       wsServer = null
@@ -137,6 +160,11 @@ async function createWindow() {
     wsServer = new WsServer(wsConfig, ptyManager)
     ptyManager.setWsServer(wsServer)
     wsServer.start()
+  }
+
+  // === Notification Server（預設關閉） ===
+  if (notifyConfig.enabled) {
+    startNotifyServer()
   }
 
   // === Custom application menu ===
@@ -1002,4 +1030,189 @@ ipcMain.handle('ws:toggle', async (_event, enabled: unknown) => {
   }
   const settings = { enabled: shouldEnable, port: wsConfig.port, host: wsConfig.host }
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
+})
+
+// === Notification Server ===
+
+function startNotifyServer(): void {
+  if (notifyServer) return
+  notifyServer = new NotifyServer(notifyConfig, (event: NotifyEvent) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    // 1. 通知 renderer 更新 unread state
+    mainWindow.webContents.send('notify:event', event)
+    // 2. 不在前景才發 macOS 通知
+    if (!mainWindow.isFocused() && Notification.isSupported()) {
+      const projectName = path.basename(event.cwd)
+      const title = event.event === 'stop'
+        ? `Agent finished: ${projectName}`
+        : `Agent waiting: ${projectName}`
+      const body = event.event === 'stop'
+        ? 'Process completed'
+        : (event.meta?.description || 'Waiting for input')
+      try {
+        const notification = new Notification({ title, body, silent: false })
+        // 點通知 → 聚焦視窗 + 切換到該 workspace/terminal
+        notification.on('click', () => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            if (mainWindow.isMinimized()) mainWindow.restore()
+            mainWindow.show()
+            mainWindow.focus()
+            mainWindow.webContents.send('notify:focus-terminal', { cwd: event.cwd })
+          }
+        })
+        notification.show()
+      } catch (e) {
+        console.error('[notify] Failed to show notification:', e)
+      }
+    }
+  })
+  notifyServer.start()
+}
+
+ipcMain.handle('notify:get-status', () => ({
+  running: notifyServer?.isRunning() ?? false,
+  enabled: notifyConfig.enabled,
+  port: notifyServer?.getPort() ?? notifyConfig.port,
+  token: notifyServer?.getToken() ?? null,
+  tokenPath: notifyConfig.tokenPath
+}))
+
+ipcMain.handle('notify:toggle', async (_event, enabled: unknown) => {
+  const shouldEnable = enabled === true
+  notifyConfig.enabled = shouldEnable
+
+  if (shouldEnable && !notifyServer) {
+    startNotifyServer()
+  } else if (!shouldEnable && notifyServer) {
+    notifyServer.stop()
+    notifyServer = null
+  }
+
+  // 持久化設定
+  const settingsDir = path.dirname(notifySettingsPath)
+  if (!fs.existsSync(settingsDir)) {
+    fs.mkdirSync(settingsDir, { recursive: true })
+  }
+  fs.writeFileSync(notifySettingsPath, JSON.stringify({
+    enabled: shouldEnable,
+    port: notifyConfig.port
+  }, null, 2))
+})
+
+// 偵測 hook 是否已安裝（讀 ~/.claude/settings.json）
+ipcMain.handle('notify:check-hook-installed', async () => {
+  try {
+    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
+    if (!fs.existsSync(settingsPath)) {
+      return { installed: false, hasStop: false, hasNotification: false, scriptExists: false }
+    }
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
+    const hooks = settings.hooks || {}
+    const checkHook = (hookList: unknown): boolean => {
+      if (!Array.isArray(hookList)) return false
+      return hookList.some((h: any) =>
+        h && Array.isArray(h.hooks) && h.hooks.some((cmd: any) =>
+          cmd && typeof cmd.command === 'string' && cmd.command.includes('better-agent-notify')
+        )
+      )
+    }
+    const hasStop = checkHook(hooks.Stop)
+    const hasNotification = checkHook(hooks.Notification)
+    const scriptPath = path.join(os.homedir(), '.claude', 'hooks', 'better-agent-notify.sh')
+    const scriptExists = fs.existsSync(scriptPath)
+    return {
+      installed: hasStop && hasNotification && scriptExists,
+      hasStop,
+      hasNotification,
+      scriptExists
+    }
+  } catch {
+    return { installed: false, hasStop: false, hasNotification: false, scriptExists: false }
+  }
+})
+
+// 自動安裝 hook script + merge ~/.claude/settings.json
+ipcMain.handle('notify:install-hook', async () => {
+  try {
+    const homedir = os.homedir()
+    const hooksDir = path.join(homedir, '.claude', 'hooks')
+    const scriptPath = path.join(hooksDir, 'better-agent-notify.sh')
+    const settingsPath = path.join(homedir, '.claude', 'settings.json')
+
+    // 1. 建立 hook script
+    const scriptContent = `#!/bin/bash
+TOKEN_FILE="$HOME/.claude/better-agent/notify-auth.txt"
+[ -f "$TOKEN_FILE" ] || exit 0
+TOKEN_INFO=$(cat "$TOKEN_FILE")
+PORT="\${TOKEN_INFO%%:*}"
+TOKEN="\${TOKEN_INFO##*:}"
+[ -z "$TOKEN" ] && exit 0
+
+CWD="\${CLAUDE_PROJECT_DIR:-$(pwd)}"
+EVENT="\${1:-stop}"
+
+curl -s -X POST "http://127.0.0.1:$PORT/notify" \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d "{\\"cwd\\":\\"$CWD\\",\\"event\\":\\"$EVENT\\"}" \\
+  --max-time 2 \\
+  >/dev/null 2>&1 || true
+`
+    if (!fs.existsSync(hooksDir)) {
+      fs.mkdirSync(hooksDir, { recursive: true })
+    }
+    fs.writeFileSync(scriptPath, scriptContent, { mode: 0o755 })
+
+    // 2. 備份並 merge settings.json
+    let settings: any = {}
+    let backupPath: string | null = null
+    if (fs.existsSync(settingsPath)) {
+      backupPath = `${settingsPath}.backup-${Date.now()}`
+      fs.copyFileSync(settingsPath, backupPath)
+      try {
+        settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
+        if (typeof settings !== 'object' || settings === null) settings = {}
+      } catch {
+        return { success: false, error: 'Failed to parse existing settings.json' }
+      }
+    }
+
+    if (!settings.hooks || typeof settings.hooks !== 'object') {
+      settings.hooks = {}
+    }
+
+    const addHookCommand = (hookName: 'Stop' | 'Notification', cmdSuffix: string) => {
+      if (!Array.isArray(settings.hooks[hookName])) {
+        settings.hooks[hookName] = []
+      }
+      const alreadyExists = settings.hooks[hookName].some((entry: any) =>
+        entry && Array.isArray(entry.hooks) && entry.hooks.some((cmd: any) =>
+          cmd && typeof cmd.command === 'string' && cmd.command.includes('better-agent-notify')
+        )
+      )
+      if (alreadyExists) return
+      settings.hooks[hookName].push({
+        matcher: '',
+        hooks: [{
+          type: 'command',
+          command: `~/.claude/hooks/better-agent-notify.sh ${cmdSuffix}`
+        }]
+      })
+    }
+
+    addHookCommand('Stop', 'stop')
+    addHookCommand('Notification', 'wait')
+
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
+
+    return {
+      success: true,
+      scriptPath,
+      settingsPath,
+      backupPath,
+      backedUp: backupPath !== null
+    }
+  } catch (e: any) {
+    return { success: false, error: e?.message || 'Unknown error' }
+  }
 })

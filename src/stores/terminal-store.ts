@@ -72,7 +72,22 @@ class TerminalStore {
 
     // 不 deactivate/activate — 所有 terminal 永遠在 activeSet，持續接收 IPC
     // 搭配 visibility:hidden CSS，切 tab 時畫面是最新狀態，零 replay 零 SIGWINCH
-    this.state = { ...this.state, activeTerminalId: id }
+    // 切到該 tab 順便清除 unread 標記
+    const terminals = this.state.terminals.map(t =>
+      t.id === id && t.unread ? { ...t, unread: false } : t
+    )
+    this.state = { ...this.state, terminals, activeTerminalId: id }
+    this.notify()
+  }
+
+  /** 標記 terminal 為未讀（紅點） */
+  markUnread(id: string, unread: boolean): void {
+    const idx = this.state.terminals.findIndex(t => t.id === id)
+    if (idx === -1) return
+    if ((this.state.terminals[idx].unread ?? false) === unread) return
+    const next = [...this.state.terminals]
+    next[idx] = { ...next[idx], unread }
+    this.state = { ...this.state, terminals: next }
     this.notify()
   }
 

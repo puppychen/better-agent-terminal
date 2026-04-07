@@ -56,6 +56,32 @@ interface ElectronAPI {
     onClientChange: (callback: (count: number) => void) => () => void
     onStatusChange: (callback: (running: boolean) => void) => () => void
   }
+  notify: {
+    getStatus: () => Promise<{
+      running: boolean
+      enabled: boolean
+      port: number
+      token: string | null
+      tokenPath: string
+    }>
+    toggle: (enabled: boolean) => Promise<void>
+    checkHookInstalled: () => Promise<{
+      installed: boolean
+      hasStop: boolean
+      hasNotification: boolean
+      scriptExists: boolean
+    }>
+    installHook: () => Promise<{
+      success: boolean
+      scriptPath?: string
+      settingsPath?: string
+      backupPath?: string | null
+      backedUp?: boolean
+      error?: string
+    }>
+    onEvent: (callback: (event: { cwd: string; event: 'stop' | 'wait'; meta?: { tool?: string; description?: string } }) => void) => () => void
+    onFocusTerminal: (callback: (event: { cwd: string }) => void) => () => void
+  }
   window: {
     onFocus: (callback: () => void) => () => void
     onCloseActiveTab: (callback: () => void) => () => void
