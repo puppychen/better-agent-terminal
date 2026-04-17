@@ -36,15 +36,17 @@ export interface TerminalInstance {
   id: string;
   workspaceId: string;
   label: string;
-  type: 'shell' | 'agent';
+  type: 'shell' | 'agent' | 'files';
   agentType?: CodeAgentType;
   cwd: string;
   createdAt: number;
   unread?: boolean;
-  /** Claude session UUID — 對應 ~/.claude/projects/<encoded>/<id>.jsonl */
+  /** Claude session UUID — 對應 ~/.claude/projects/<encoded>/<id>.jsonl（agent 專用） */
   claudeSessionId?: string;
   /** 用戶手動改過 label 後設 true，停止自動跟隨 sessions-index summary */
   labelLockedByUser?: boolean;
+  /** Files tab 狀態：當前開啟檔案的相對路徑（type='files' 專用） */
+  filesActivePath?: string;
 }
 
 export interface CreatePtyOptions {

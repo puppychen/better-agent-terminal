@@ -22,6 +22,24 @@ export type ClaudeSessionDeleteResult =
   | { ok: true }
   | { ok: false; error: 'NO_INDEX' | 'UNSUPPORTED_VERSION' | 'NOT_FOUND' | 'IO_ERROR'; message?: string }
 
+export interface FsDirEntry {
+  name: string
+  isDirectory: boolean
+  isSymlink: boolean
+}
+
+export type FsListDirResult =
+  | { ok: true; entries: FsDirEntry[] }
+  | { ok: false; error: 'OUT_OF_SCOPE' | 'NOT_FOUND' | 'NOT_DIRECTORY' | 'IO_ERROR'; message?: string }
+
+export type FsReadFileResult =
+  | { ok: true; content: string; mtime: number; size: number }
+  | { ok: false; error: 'OUT_OF_SCOPE' | 'NOT_FOUND' | 'NOT_FILE' | 'TOO_LARGE' | 'BINARY' | 'IO_ERROR'; message?: string }
+
+export type FsStatResult =
+  | { ok: true; mtime: number; size: number; isDirectory: boolean }
+  | { ok: false; error: 'OUT_OF_SCOPE' | 'NOT_FOUND' | 'IO_ERROR'; message?: string }
+
 interface SubRepoInfo {
   name: string
   path: string
@@ -110,6 +128,11 @@ interface ElectronAPI {
     watch: (cwd: string) => Promise<boolean>
     unwatch: (cwd: string) => Promise<boolean>
     onChange: (callback: (cwd: string) => void) => () => void
+  }
+  fs: {
+    listDir: (workspaceCwd: string, relativePath: string) => Promise<FsListDirResult>
+    readFile: (workspaceCwd: string, relativePath: string) => Promise<FsReadFileResult>
+    stat: (workspaceCwd: string, relativePath: string) => Promise<FsStatResult>
   }
   window: {
     onFocus: (callback: () => void) => () => void

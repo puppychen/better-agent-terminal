@@ -8,6 +8,7 @@ import type { WsServerConfig } from './ws-types'
 import { NotifyServer } from './notify-server'
 import type { NotifyConfig, NotifyEvent } from './notify-server'
 import { listSessions as csList, deleteSession as csDelete, watchSessions as csWatch } from './claude-sessions'
+import { listDir as fsListDir, readFile as fsReadFile, stat as fsStat } from './file-system'
 
 // userData migration: Better Agent Terminal → Better Agent Workspace
 // Dev mode uses package.json "name" (lowercase), production uses "productName" (title case)
@@ -1263,4 +1264,19 @@ ipcMain.handle('claude-sessions:unwatch', async (_event, cwd: string) => {
     claudeSessionWatchers.delete(cwd)
   }
   return true
+})
+
+// === File System IPC Handlers ===
+// 限定在 workspace folder 內，防 path traversal
+
+ipcMain.handle('fs:list-dir', async (_event, workspaceCwd: string, relativePath: string) => {
+  return fsListDir(workspaceCwd, relativePath)
+})
+
+ipcMain.handle('fs:read-file', async (_event, workspaceCwd: string, relativePath: string) => {
+  return fsReadFile(workspaceCwd, relativePath)
+})
+
+ipcMain.handle('fs:stat', async (_event, workspaceCwd: string, relativePath: string) => {
+  return fsStat(workspaceCwd, relativePath)
 })

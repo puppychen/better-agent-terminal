@@ -22,7 +22,7 @@ class TerminalStore {
   }
 
   async createTerminal(workspaceId: string, cwd: string, options?: {
-    type?: 'shell' | 'agent'
+    type?: 'shell' | 'agent' | 'files'
     agentType?: CodeAgentType
     label?: string
     initialCommand?: string
@@ -35,11 +35,9 @@ class TerminalStore {
 
     let label = options?.label
     if (!label) {
-      if (type === 'agent') {
-        label = `[C] ${folderName}`
-      } else {
-        label = `[T] ${folderName}`
-      }
+      if (type === 'agent') label = `[C] ${folderName}`
+      else if (type === 'files') label = `[F] ${folderName}`
+      else label = `[T] ${folderName}`
     }
 
     const instance: TerminalInstance = {
@@ -50,14 +48,16 @@ class TerminalStore {
       labelLockedByUser: options?.labelLockedByUser
     }
 
-    const ptyOptions: CreatePtyOptions = {
-      id, cwd, type,
-      agentType: options?.agentType,
-      initialCommand: options?.initialCommand
+    // Files tab 沒有 PTY；只有 shell / agent 走 PTY 建立
+    if (type === 'shell' || type === 'agent') {
+      const ptyOptions: CreatePtyOptions = {
+        id, cwd, type,
+        agentType: options?.agentType,
+        initialCommand: options?.initialCommand
+      }
+      const ok = await window.electronAPI.pty.create(ptyOptions)
+      if (!ok) return null
     }
-
-    const ok = await window.electronAPI.pty.create(ptyOptions)
-    if (!ok) return null
 
     this.state = {
       terminals: [...this.state.terminals, instance],
@@ -65,8 +65,10 @@ class TerminalStore {
     }
     this.notify()
 
-    // activate 只是加入 activeSet 讓 IPC 開始流動（不 deactivate 舊的）
-    await window.electronAPI.pty.activate(id)
+    // activate 對 files tab 是 no-op（main 端 instance map 不存在，IPC handler 會 early return）
+    if (type === 'shell' || type === 'agent') {
+      await window.electronAPI.pty.activate(id)
+    }
     return instance
   }
 

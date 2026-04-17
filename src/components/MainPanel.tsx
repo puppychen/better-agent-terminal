@@ -1,8 +1,11 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, lazy, Suspense } from 'react'
 import { terminalStore } from '../stores/terminal-store'
 import { workspaceStore } from '../stores/workspace-store'
 import { TerminalPanel } from './TerminalPanel'
 import type { TerminalState } from '../types'
+
+// Files tab 走 lazy chunk —— CodeMirror + 9 語言 packages 不進主 bundle
+const FilesTab = lazy(() => import('./FilesTab').then(m => ({ default: m.FilesTab })))
 
 interface GitInfo {
   branch: string
@@ -88,6 +91,17 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
     if (!activeWorkspaceId || !workspaceCwd || !onAddAgent) return
     onAddAgent(activeWorkspaceId, workspaceCwd)
   }, [activeWorkspaceId, workspaceCwd, onAddAgent])
+
+  const handleNewFiles = useCallback(async () => {
+    if (!activeWorkspaceId || !workspaceCwd) return
+    // 單例：若已存在 Files tab，切過去而非新建
+    const existing = terminalStore.getTerminalsForWorkspace(activeWorkspaceId).find(t => t.type === 'files')
+    if (existing) {
+      await terminalStore.setActiveTerminal(existing.id)
+      return
+    }
+    await terminalStore.createTerminal(activeWorkspaceId, workspaceCwd, { type: 'files' })
+  }, [activeWorkspaceId, workspaceCwd])
 
   // === Tab inline rename ===
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -217,6 +231,13 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
             + C
           </button>
         )}
+        <button
+          className="terminal-tab-new terminal-tab-new-files"
+          onClick={handleNewFiles}
+          title="Open Files panel"
+        >
+          + F
+        </button>
       </div>
 
       {/* Terminal Panels — render ALL terminals, CSS show/hide to avoid unmount/remount */}
@@ -226,11 +247,17 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
             key={t.id}
             className={`terminal-panel-wrapper ${t.id === activeTerminalId ? 'active' : ''}`}
           >
-            <TerminalPanel
-              terminalId={t.id}
-              isActive={t.id === activeTerminalId}
-              onCycleTab={handleCycleTab}
-            />
+            {t.type === 'files' ? (
+              <Suspense fallback={<div className="files-tab-placeholder">載入編輯器中…</div>}>
+                <FilesTab workspaceCwd={t.cwd} isActive={t.id === activeTerminalId} />
+              </Suspense>
+            ) : (
+              <TerminalPanel
+                terminalId={t.id}
+                isActive={t.id === activeTerminalId}
+                onCycleTab={handleCycleTab}
+              />
+            )}
           </div>
         ))}
         {wsTerminals.length === 0 && (

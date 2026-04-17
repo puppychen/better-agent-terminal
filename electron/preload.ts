@@ -77,6 +77,11 @@ const electronAPI = {
       return () => { ipcRenderer.removeListener('notify:focus-terminal', handler) }
     }
   },
+  fs: {
+    listDir: (workspaceCwd: string, relativePath: string) => ipcRenderer.invoke('fs:list-dir', workspaceCwd, relativePath),
+    readFile: (workspaceCwd: string, relativePath: string) => ipcRenderer.invoke('fs:read-file', workspaceCwd, relativePath),
+    stat: (workspaceCwd: string, relativePath: string) => ipcRenderer.invoke('fs:stat', workspaceCwd, relativePath)
+  },
   claudeSessions: {
     list: (cwd: string) => ipcRenderer.invoke('claude-sessions:list', cwd),
     delete: (cwd: string, sessionId: string) => ipcRenderer.invoke('claude-sessions:delete', cwd, sessionId),
