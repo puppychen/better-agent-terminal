@@ -66,15 +66,26 @@ const electronAPI = {
     toggle: (enabled: boolean) => ipcRenderer.invoke('notify:toggle', enabled),
     checkHookInstalled: () => ipcRenderer.invoke('notify:check-hook-installed'),
     installHook: () => ipcRenderer.invoke('notify:install-hook'),
-    onEvent: (callback: (event: { cwd: string; event: 'stop' | 'wait'; meta?: { tool?: string; description?: string } }) => void) => {
+    onEvent: (callback: (event: { cwd: string; event: 'stop' | 'wait'; sessionId?: string; meta?: { tool?: string; description?: string } }) => void) => {
       const handler = (_e: any, event: any) => callback(event)
       ipcRenderer.on('notify:event', handler)
       return () => { ipcRenderer.removeListener('notify:event', handler) }
     },
-    onFocusTerminal: (callback: (event: { cwd: string }) => void) => {
+    onFocusTerminal: (callback: (event: { cwd: string; sessionId?: string }) => void) => {
       const handler = (_e: any, event: any) => callback(event)
       ipcRenderer.on('notify:focus-terminal', handler)
       return () => { ipcRenderer.removeListener('notify:focus-terminal', handler) }
+    }
+  },
+  claudeSessions: {
+    list: (cwd: string) => ipcRenderer.invoke('claude-sessions:list', cwd),
+    delete: (cwd: string, sessionId: string) => ipcRenderer.invoke('claude-sessions:delete', cwd, sessionId),
+    watch: (cwd: string) => ipcRenderer.invoke('claude-sessions:watch', cwd),
+    unwatch: (cwd: string) => ipcRenderer.invoke('claude-sessions:unwatch', cwd),
+    onChange: (callback: (cwd: string) => void) => {
+      const handler = (_e: any, cwd: string) => callback(cwd)
+      ipcRenderer.on('claude-sessions:changed', handler)
+      return () => { ipcRenderer.removeListener('claude-sessions:changed', handler) }
     }
   },
   window: {

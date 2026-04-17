@@ -108,30 +108,34 @@ function AppContent() {
       setShowQuitConfirm(true)
     })
 
-    // 點 macOS 通知 → 切換到對應 workspace + terminal
-    const unsubFocusTerminal = window.electronAPI.notify?.onFocusTerminal?.(({ cwd }) => {
+    // 路由優先順序：sessionId → cwd（兼容舊版 hook）
+    // 多 agent 同 cwd 時，sessionId 才能精準對應到正確的 terminal
+    const findAgentTarget = (cwd: string, sessionId?: string) => {
       const terminals = terminalStore.getState().terminals
-      const target = terminals.find(t => t.cwd === cwd && t.type === 'agent')
+      if (sessionId) {
+        const bySession = terminals.find(t => t.claudeSessionId === sessionId && t.type === 'agent')
+        if (bySession) return bySession
+      }
+      const activeWorkspaceId = workspaceStore.getState().activeWorkspaceId
+      return terminals.find(t =>
+        t.cwd === cwd && t.type === 'agent' && t.workspaceId === activeWorkspaceId
+      ) || terminals.find(t => t.cwd === cwd && t.type === 'agent')
+    }
+
+    // 點 macOS 通知 → 切換到對應 workspace + terminal
+    const unsubFocusTerminal = window.electronAPI.notify?.onFocusTerminal?.(({ cwd, sessionId }) => {
+      const target = findAgentTarget(cwd, sessionId)
       if (!target) return
-      // 切 workspace
       if (target.workspaceId !== workspaceStore.getState().activeWorkspaceId) {
         workspaceStore.setActiveWorkspace(target.workspaceId)
       }
-      // 切 terminal
       terminalStore.setActiveTerminal(target.id)
     })
 
     // Notify event → mark terminal as unread
     const unsubNotify = window.electronAPI.notify?.onEvent?.((event) => {
-      const terminals = terminalStore.getState().terminals
-      // 找出 cwd 對應的 agent terminal
-      // 優先找 active workspace 內的，否則找任何符合的
-      const activeWorkspaceId = workspaceStore.getState().activeWorkspaceId
-      const target = terminals.find(t =>
-        t.cwd === event.cwd && t.type === 'agent' && t.workspaceId === activeWorkspaceId
-      ) || terminals.find(t => t.cwd === event.cwd && t.type === 'agent')
+      const target = findAgentTarget(event.cwd, event.sessionId)
       if (!target) return
-      // 若已是 active terminal 且視窗在前景 → 不標（使用者正在看）
       const { activeTerminalId } = terminalStore.getState()
       if (target.id === activeTerminalId && document.hasFocus()) return
       terminalStore.markUnread(target.id, true)
@@ -185,9 +189,101 @@ function AppContent() {
 
   const handleCreateEmbeddedTerminal = useCallback(async (
     workspaceId: string, cwd: string,
-    options?: { type?: 'shell' | 'agent'; agentType?: 'claude'; initialCommand?: string }
+    options?: { type?: 'shell' | 'agent'; agentType?: 'claude'; initialCommand?: string; claudeSessionId?: string; label?: string }
   ) => {
     await terminalStore.createTerminal(workspaceId, cwd, options)
+  }, [])
+
+  // === Claude session label auto-tracking ===
+  // 對所有 agent terminal 的 cwd 動態 watch，當 sessions-index 變動時自動更新 label（除非用戶已手動鎖定）
+  useEffect(() => {
+    const watched = new Set<string>()
+
+    const refreshLabelsForCwd = async (cwd: string) => {
+      const agents = terminalStore.getState().terminals
+        .filter(t => t.type === 'agent' && t.agentType === 'claude' && t.cwd === cwd && t.claudeSessionId)
+      if (agents.length === 0) return
+      const result = await window.electronAPI.claudeSessions.list(cwd)
+      if (!result.ok) return
+      for (const term of agents) {
+        const entry = result.entries.find(e => e.sessionId === term.claudeSessionId)
+        if (!entry) continue
+        const summary = entry.summary?.trim()
+        const fp = (entry.firstPrompt || '').trim()
+        const fallback = fp.length > 60 ? fp.slice(0, 60) + '…' : fp
+        const newLabel = summary || fallback
+        if (newLabel) terminalStore.setLabel(term.id, newLabel, false)
+      }
+    }
+
+    const syncWatchers = () => {
+      const next = new Set(
+        terminalStore.getState().terminals
+          .filter(t => t.type === 'agent' && t.agentType === 'claude')
+          .map(t => t.cwd)
+      )
+      // 新增
+      for (const cwd of next) {
+        if (!watched.has(cwd)) {
+          window.electronAPI.claudeSessions.watch(cwd)
+          watched.add(cwd)
+          // 啟動時立即 sync 一次（resume 場景已有 entry 可套用）
+          refreshLabelsForCwd(cwd)
+        }
+      }
+      // 移除
+      for (const cwd of watched) {
+        if (!next.has(cwd)) {
+          window.electronAPI.claudeSessions.unwatch(cwd)
+          watched.delete(cwd)
+        }
+      }
+    }
+
+    const unsubStore = terminalStore.subscribe(syncWatchers)
+    syncWatchers()
+
+    const unsubChange = window.electronAPI.claudeSessions.onChange((cwd) => {
+      refreshLabelsForCwd(cwd)
+    })
+
+    return () => {
+      unsubStore()
+      unsubChange()
+      for (const cwd of watched) window.electronAPI.claudeSessions.unwatch(cwd)
+      watched.clear()
+    }
+  }, [])
+
+  // === Claude Agent launch ===
+  // 簡化：不再使用對話框，直接啟動。
+  // Sidebar Claude 按鈕：已有 active agent → 切過去；否則 -c 沿用最近 session。
+  // MainPanel +C 按鈕：永遠純新建（--session-id uuid 預先綁定，方便 label 自動跟隨）。
+
+  const handleLaunchAgent = useCallback(async (workspaceId: string, cwd: string) => {
+    const existing = terminalStore.getTerminalsForWorkspace(workspaceId)
+      .find(t => t.type === 'agent' && t.agentType === 'claude')
+    if (existing) {
+      await terminalStore.setActiveTerminal(existing.id)
+      return
+    }
+    // -c continue 最近一次。sessionId 由 claude 自己決定，我們不做精準 label 跟隨；用戶可右鍵改名
+    terminalStore.createTerminal(workspaceId, cwd, {
+      type: 'agent',
+      agentType: 'claude',
+      initialCommand: 'claude -c --permission-mode bypassPermissions',
+      labelLockedByUser: true  // 鎖定 default label，避免 onChange 誤套用其他 entry summary
+    })
+  }, [])
+
+  const handleAddAgent = useCallback((workspaceId: string, cwd: string) => {
+    const sessionId = crypto.randomUUID()
+    terminalStore.createTerminal(workspaceId, cwd, {
+      type: 'agent',
+      agentType: 'claude',
+      initialCommand: `claude --session-id ${sessionId} --permission-mode bypassPermissions`,
+      claudeSessionId: sessionId
+    })
   }, [])
 
   const handleCycleAgent = useCallback((direction: 1 | -1) => {
@@ -224,6 +320,7 @@ function AppContent() {
         onRenameGroup={(oldName, newName) => workspaceStore.renameGroup(oldName, newName)}
         onOpenAbout={() => setShowAbout(true)}
         onCreateEmbeddedTerminal={handleCreateEmbeddedTerminal}
+        onLaunchAgent={handleLaunchAgent}
       />
       <div
         className="resize-handle"
@@ -233,6 +330,7 @@ function AppContent() {
         activeWorkspaceId={state.activeWorkspaceId}
         workspaceCwd={activeWorkspace?.folderPath ?? null}
         onCycleAgent={handleCycleAgent}
+        onAddAgent={handleAddAgent}
         onRequestCloseTab={(id) => {
           const terminal = terminalStore.getState().terminals.find(t => t.id === id)
           if (!terminal) return

@@ -1,5 +1,6 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { terminalStore } from '../stores/terminal-store'
+import { workspaceStore } from '../stores/workspace-store'
 import { TerminalPanel } from './TerminalPanel'
 import type { TerminalState } from '../types'
 
@@ -26,9 +27,11 @@ interface MainPanelProps {
   workspaceCwd: string | null
   onRequestCloseTab?: (id: string) => void
   onCycleAgent?: (direction: 1 | -1) => void
+  /** 父層處理：永遠開 launch dialog 讓用戶選 resume 或新建 */
+  onAddAgent?: (workspaceId: string, cwd: string) => void
 }
 
-export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, onCycleAgent }: MainPanelProps) {
+export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, onCycleAgent, onAddAgent }: MainPanelProps) {
   const [termState, setTermState] = useState<TerminalState>(terminalStore.getState())
   const [gitInfo, setGitInfo] = useState<GitInfo | null>(null)
   const [subRepos, setSubRepos] = useState<SubRepoInfo[]>([])
@@ -81,6 +84,54 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
     await terminalStore.createTerminal(activeWorkspaceId, workspaceCwd, { type: 'shell' })
   }, [activeWorkspaceId, workspaceCwd])
 
+  const handleNewClaude = useCallback(() => {
+    if (!activeWorkspaceId || !workspaceCwd || !onAddAgent) return
+    onAddAgent(activeWorkspaceId, workspaceCwd)
+  }, [activeWorkspaceId, workspaceCwd, onAddAgent])
+
+  // === Tab inline rename ===
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const renameInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    if (renamingId && renameInputRef.current) {
+      renameInputRef.current.focus()
+      renameInputRef.current.select()
+    }
+  }, [renamingId])
+
+  const startRename = (terminalId: string, currentLabel: string) => {
+    setRenamingId(terminalId)
+    setRenameValue(currentLabel)
+  }
+
+  const commitRename = () => {
+    const id = renamingId
+    if (!id) return
+    const newLabel = renameValue.trim()
+    if (newLabel) {
+      const term = terminalStore.getState().terminals.find(t => t.id === id)
+      terminalStore.setLabel(id, newLabel, true)
+      // 同步寫入 workspace 的 sessionId → label map（agent + 有 sessionId 才存）
+      if (term?.type === 'agent' && term.claudeSessionId) {
+        workspaceStore.setClaudeSessionLabel(term.workspaceId, term.claudeSessionId, newLabel)
+      }
+    }
+    setRenamingId(null)
+    setRenameValue('')
+  }
+
+  const cancelRename = () => {
+    setRenamingId(null)
+    setRenameValue('')
+  }
+
+  const handleTabContextMenu = (e: React.MouseEvent, t: TerminalState['terminals'][number]) => {
+    e.preventDefault()
+    startRename(t.id, t.label)
+  }
+
   const handleCloseTab = useCallback((id: string) => {
     if (onRequestCloseTab) {
       onRequestCloseTab(id)
@@ -124,9 +175,27 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
           <div
             key={t.id}
             className={`terminal-tab ${t.id === activeTerminalId ? 'active' : ''}`}
-            onClick={() => handleSelectTab(t.id)}
+            onClick={() => renamingId !== t.id && handleSelectTab(t.id)}
+            onContextMenu={(e) => handleTabContextMenu(e, t)}
+            onDoubleClick={(e) => { e.stopPropagation(); startRename(t.id, t.label) }}
+            title="右鍵 / 雙擊 重新命名"
           >
-            <span className="terminal-tab-label">{t.label}</span>
+            {renamingId === t.id ? (
+              <input
+                ref={renameInputRef}
+                className="terminal-tab-rename-input"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onBlur={commitRename}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); commitRename() }
+                  else if (e.key === 'Escape') { e.preventDefault(); cancelRename() }
+                }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <span className="terminal-tab-label">{t.label}</span>
+            )}
             {t.unread && <span className="terminal-tab-unread-dot" title="Unread notification" />}
             <button
               className="terminal-tab-close"
@@ -139,6 +208,15 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
         <button className="terminal-tab-new" onClick={handleNewShell} title="New Terminal">
           +
         </button>
+        {onAddAgent && (
+          <button
+            className="terminal-tab-new terminal-tab-new-claude"
+            onClick={handleNewClaude}
+            title="New Claude session"
+          >
+            + C
+          </button>
+        )}
       </div>
 
       {/* Terminal Panels — render ALL terminals, CSS show/hide to avoid unmount/remount */}

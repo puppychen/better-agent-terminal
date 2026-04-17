@@ -26,6 +26,8 @@ class TerminalStore {
     agentType?: CodeAgentType
     label?: string
     initialCommand?: string
+    claudeSessionId?: string
+    labelLockedByUser?: boolean
   }): Promise<TerminalInstance | null> {
     const id = uuidv4()
     const type = options?.type || 'shell'
@@ -43,7 +45,9 @@ class TerminalStore {
     const instance: TerminalInstance = {
       id, workspaceId, label, type,
       agentType: options?.agentType,
-      cwd, createdAt: Date.now()
+      cwd, createdAt: Date.now(),
+      claudeSessionId: options?.claudeSessionId,
+      labelLockedByUser: options?.labelLockedByUser
     }
 
     const ptyOptions: CreatePtyOptions = {
@@ -77,6 +81,34 @@ class TerminalStore {
       t.id === id && t.unread ? { ...t, unread: false } : t
     )
     this.state = { ...this.state, terminals, activeTerminalId: id }
+    this.notify()
+  }
+
+  /**
+   * 設定 label。lockByUser=true 時標記為手動命名，停止自動跟隨。
+   * 自動跟隨呼叫請傳 lockByUser=false（預設），手動改名請傳 true。
+   */
+  setLabel(id: string, label: string, lockByUser: boolean = false): void {
+    const idx = this.state.terminals.findIndex(t => t.id === id)
+    if (idx === -1) return
+    const cur = this.state.terminals[idx]
+    // 已被手動鎖定，自動跟隨呼叫不得覆寫
+    if (cur.labelLockedByUser && !lockByUser) return
+    if (cur.label === label && (cur.labelLockedByUser ?? false) === lockByUser) return
+    const next = [...this.state.terminals]
+    next[idx] = { ...cur, label, labelLockedByUser: lockByUser || cur.labelLockedByUser }
+    this.state = { ...this.state, terminals: next }
+    this.notify()
+  }
+
+  /** 綁定 Claude session UUID（新建時若已透過 --session-id 指定，啟動後即可呼叫） */
+  setClaudeSessionId(id: string, sessionId: string): void {
+    const idx = this.state.terminals.findIndex(t => t.id === id)
+    if (idx === -1) return
+    if (this.state.terminals[idx].claudeSessionId === sessionId) return
+    const next = [...this.state.terminals]
+    next[idx] = { ...next[idx], claudeSessionId: sessionId }
+    this.state = { ...this.state, terminals: next }
     this.notify()
   }
 

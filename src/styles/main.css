@@ -1513,6 +1513,19 @@ body {
   text-overflow: ellipsis;
 }
 
+.terminal-tab-rename-input {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--accent-color);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 12px;
+  font-family: inherit;
+  min-width: 80px;
+  max-width: 200px;
+  outline: none;
+}
+
 .terminal-tab-close {
   background: none;
   border: none;
@@ -1542,6 +1555,12 @@ body {
 .terminal-tab-new:hover {
   color: var(--text-primary);
   background: var(--bg-hover);
+}
+
+.terminal-tab-new-claude {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
 }
 
 /* Terminal Panel Container */
@@ -1760,3 +1779,4 @@ body {
 .terminal-panels-empty button:hover {
   background: var(--bg-hover);
 }
+

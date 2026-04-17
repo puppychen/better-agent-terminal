@@ -26,7 +26,11 @@ interface SidebarProps {
     type?: 'shell' | 'agent'
     agentType?: 'claude'
     initialCommand?: string
+    claudeSessionId?: string
+    label?: string
   }) => void
+  /** 統一由父層處理：已有 active agent → 切過去；否則開 launch dialog */
+  onLaunchAgent?: (workspaceId: string, cwd: string) => void
   width?: number
 }
 
@@ -52,6 +56,7 @@ export function Sidebar({
   onRenameGroup,
   onOpenAbout,
   onCreateEmbeddedTerminal,
+  onLaunchAgent,
   width
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -286,24 +291,15 @@ export function Sidebar({
     setWsContextMenuPos({ x: e.clientX, y: e.clientY })
   }
 
-  // Agent click: launch Claude or switch to existing Claude terminal
+  // Agent click: 委由父層統一處理 launch dialog
   const handleCAgentClick = async (workspace: Workspace, e: React.MouseEvent) => {
     e.stopPropagation()
     onSelectWorkspace(workspace.id)
 
-    if (onCreateEmbeddedTerminal) {
-      // Check if a Claude terminal already exists for this workspace
-      const existing = terminalStore.getTerminalsForWorkspace(workspace.id)
-        .find(t => t.type === 'agent' && t.agentType === 'claude')
-      if (existing) {
-        await terminalStore.setActiveTerminal(existing.id)
-      } else {
-        onCreateEmbeddedTerminal(workspace.id, workspace.folderPath, {
-          type: 'agent', agentType: 'claude', initialCommand: 'claude -c --permission-mode bypassPermissions'
-        })
-      }
+    if (onLaunchAgent) {
+      onLaunchAgent(workspace.id, workspace.folderPath)
     } else {
-      // Fallback: external Terminal.app
+      // Fallback: external Terminal.app（保留向後相容）
       const result = await window.electronAPI.shell.checkAgentRunning(workspace.folderPath)
       if (result.running && result.type) {
         await window.electronAPI.shell.focusAgent(workspace.folderPath, result.type as 'claude')

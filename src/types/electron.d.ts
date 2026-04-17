@@ -1,5 +1,27 @@
 import type { CodeAgentType, CreatePtyOptions } from './index'
 
+export interface ClaudeSessionEntry {
+  sessionId: string
+  fullPath: string
+  fileMtime: number
+  firstPrompt: string
+  summary?: string
+  messageCount: number
+  created: string
+  modified: string
+  gitBranch?: string
+  projectPath: string
+  isSidechain: boolean
+}
+
+export type ClaudeSessionListResult =
+  | { ok: true; entries: ClaudeSessionEntry[] }
+  | { ok: false; error: 'NO_INDEX' | 'PARSE_ERROR' | 'UNSUPPORTED_VERSION'; message?: string }
+
+export type ClaudeSessionDeleteResult =
+  | { ok: true }
+  | { ok: false; error: 'NO_INDEX' | 'UNSUPPORTED_VERSION' | 'NOT_FOUND' | 'IO_ERROR'; message?: string }
+
 interface SubRepoInfo {
   name: string
   path: string
@@ -79,8 +101,15 @@ interface ElectronAPI {
       backedUp?: boolean
       error?: string
     }>
-    onEvent: (callback: (event: { cwd: string; event: 'stop' | 'wait'; meta?: { tool?: string; description?: string } }) => void) => () => void
-    onFocusTerminal: (callback: (event: { cwd: string }) => void) => () => void
+    onEvent: (callback: (event: { cwd: string; event: 'stop' | 'wait'; sessionId?: string; meta?: { tool?: string; description?: string } }) => void) => () => void
+    onFocusTerminal: (callback: (event: { cwd: string; sessionId?: string }) => void) => () => void
+  }
+  claudeSessions: {
+    list: (cwd: string) => Promise<ClaudeSessionListResult>
+    delete: (cwd: string, sessionId: string) => Promise<ClaudeSessionDeleteResult>
+    watch: (cwd: string) => Promise<boolean>
+    unwatch: (cwd: string) => Promise<boolean>
+    onChange: (callback: (cwd: string) => void) => () => void
   }
   window: {
     onFocus: (callback: () => void) => () => void

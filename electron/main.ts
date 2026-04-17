@@ -7,6 +7,7 @@ import { WsServer } from './ws-server'
 import type { WsServerConfig } from './ws-types'
 import { NotifyServer } from './notify-server'
 import type { NotifyConfig, NotifyEvent } from './notify-server'
+import { listSessions as csList, deleteSession as csDelete, watchSessions as csWatch } from './claude-sessions'
 
 // userData migration: Better Agent Terminal → Better Agent Workspace
 // Dev mode uses package.json "name" (lowercase), production uses "productName" (title case)
@@ -136,6 +137,11 @@ async function createWindow() {
       ptyManager.dispose()
       ptyManager = null
     }
+    // 清理 sessions-index 監聽（避免 hot reload / 多視窗場景累積）
+    for (const [, w] of claudeSessionWatchers) {
+      try { w.dispose() } catch { /* ignore */ }
+    }
+    claudeSessionWatchers.clear()
     mainWindow = null
   })
 
@@ -1057,7 +1063,7 @@ function startNotifyServer(): void {
             if (mainWindow.isMinimized()) mainWindow.restore()
             mainWindow.show()
             mainWindow.focus()
-            mainWindow.webContents.send('notify:focus-terminal', { cwd: event.cwd })
+            mainWindow.webContents.send('notify:focus-terminal', { cwd: event.cwd, sessionId: event.sessionId })
           }
         })
         notification.show()
@@ -1140,6 +1146,7 @@ ipcMain.handle('notify:install-hook', async () => {
     const settingsPath = path.join(homedir, '.claude', 'settings.json')
 
     // 1. 建立 hook script
+    // Claude hook 透過 stdin 餵 JSON（含 session_id / cwd 等），用 sed 擷取 session_id 以精準路由到對應 terminal
     const scriptContent = `#!/bin/bash
 TOKEN_FILE="$HOME/.claude/better-agent/notify-auth.txt"
 [ -f "$TOKEN_FILE" ] || exit 0
@@ -1148,13 +1155,15 @@ PORT="\${TOKEN_INFO%%:*}"
 TOKEN="\${TOKEN_INFO##*:}"
 [ -z "$TOKEN" ] && exit 0
 
+INPUT=$(cat 2>/dev/null || echo "")
+SESSION_ID=$(printf '%s' "$INPUT" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -1)
 CWD="\${CLAUDE_PROJECT_DIR:-$(pwd)}"
 EVENT="\${1:-stop}"
 
 curl -s -X POST "http://127.0.0.1:$PORT/notify" \\
   -H "Authorization: Bearer $TOKEN" \\
   -H "Content-Type: application/json" \\
-  -d "{\\"cwd\\":\\"$CWD\\",\\"event\\":\\"$EVENT\\"}" \\
+  -d "{\\"cwd\\":\\"$CWD\\",\\"event\\":\\"$EVENT\\",\\"sessionId\\":\\"$SESSION_ID\\"}" \\
   --max-time 2 \\
   >/dev/null 2>&1 || true
 `
@@ -1215,4 +1224,43 @@ curl -s -X POST "http://127.0.0.1:$PORT/notify" \\
   } catch (e: any) {
     return { success: false, error: e?.message || 'Unknown error' }
   }
+})
+
+// === Claude Sessions IPC Handlers ===
+// 讀取 / 監聽 / 刪除 ~/.claude/projects/<encoded>/sessions-index.json
+
+const claudeSessionWatchers: Map<string, { dispose: () => void; refCount: number }> = new Map()
+
+ipcMain.handle('claude-sessions:list', async (_event, cwd: string) => {
+  return csList(cwd)
+})
+
+ipcMain.handle('claude-sessions:delete', async (_event, cwd: string, sessionId: string) => {
+  return csDelete(cwd, sessionId)
+})
+
+ipcMain.handle('claude-sessions:watch', async (_event, cwd: string) => {
+  const existing = claudeSessionWatchers.get(cwd)
+  if (existing) {
+    existing.refCount += 1
+    return true
+  }
+  const dispose = csWatch(cwd, () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try { mainWindow.webContents.send('claude-sessions:changed', cwd) } catch { /* window closing */ }
+    }
+  })
+  claudeSessionWatchers.set(cwd, { dispose, refCount: 1 })
+  return true
+})
+
+ipcMain.handle('claude-sessions:unwatch', async (_event, cwd: string) => {
+  const entry = claudeSessionWatchers.get(cwd)
+  if (!entry) return false
+  entry.refCount -= 1
+  if (entry.refCount <= 0) {
+    entry.dispose()
+    claudeSessionWatchers.delete(cwd)
+  }
+  return true
 })

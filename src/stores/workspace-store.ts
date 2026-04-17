@@ -239,6 +239,35 @@ class WorkspaceStore {
     this.setActiveWorkspace(groupWorkspaces[prevIndex].id)
   }
 
+  /** 寫入或刪除 sessionId 對應的 user-given label（label 為 falsy 時刪除 entry） */
+  setClaudeSessionLabel(workspaceId: string, sessionId: string, label: string | null | undefined): void {
+    const idx = this.state.workspaces.findIndex(w => w.id === workspaceId)
+    if (idx === -1) return
+    const cur = this.state.workspaces[idx]
+    const next = { ...(cur.claudeSessionLabels || {}) }
+    if (label) {
+      if (next[sessionId] === label) return
+      next[sessionId] = label
+    } else {
+      if (!(sessionId in next)) return
+      delete next[sessionId]
+    }
+    const workspaces = [...this.state.workspaces]
+    workspaces[idx] = {
+      ...cur,
+      claudeSessionLabels: Object.keys(next).length > 0 ? next : undefined
+    }
+    this.state = { ...this.state, workspaces }
+    this.notify()
+    this.save()
+  }
+
+  /** 讀取 sessionId 對應的 user-given label（沒有則 undefined） */
+  getClaudeSessionLabel(workspaceId: string, sessionId: string): string | undefined {
+    const ws = this.state.workspaces.find(w => w.id === workspaceId)
+    return ws?.claudeSessionLabels?.[sessionId]
+  }
+
   // Persistence
   async save(): Promise<void> {
     const activeGroup = this.getActiveGroup()

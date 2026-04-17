@@ -10,6 +10,8 @@ export interface Workspace {
   createdAt: number;
   group?: string;
   claudeSessionId?: string;
+  /** sessionId → user-given label。手動命名 agent terminal 後寫入；resume 同 sessionId 時自動套用 + 鎖定 */
+  claudeSessionLabels?: Record<string, string>;
 }
 
 // Preset roles for quick selection
@@ -39,6 +41,10 @@ export interface TerminalInstance {
   cwd: string;
   createdAt: number;
   unread?: boolean;
+  /** Claude session UUID — 對應 ~/.claude/projects/<encoded>/<id>.jsonl */
+  claudeSessionId?: string;
+  /** 用戶手動改過 label 後設 true，停止自動跟隨 sessions-index summary */
+  labelLockedByUser?: boolean;
 }
 
 export interface CreatePtyOptions {
