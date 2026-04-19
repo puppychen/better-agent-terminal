@@ -103,6 +103,28 @@ class TerminalStore {
     this.notify()
   }
 
+  private filesRequestNonce: number = 0
+
+  /**
+   * 在指定 workspace 的單例 Files tab 內開啟檔案；無則自動建立。
+   * relativePath 相對於 workspaceCwd。nonce 遞增確保同檔重複請求也觸發 FilesTab 重載。
+   */
+  async openFileInFilesTab(workspaceId: string, workspaceCwd: string, relativePath: string): Promise<void> {
+    let filesTerm = this.state.terminals.find(t => t.workspaceId === workspaceId && t.type === 'files')
+    if (!filesTerm) {
+      const created = await this.createTerminal(workspaceId, workspaceCwd, { type: 'files' })
+      if (!created) return
+      filesTerm = created
+    }
+    const idx = this.state.terminals.findIndex(t => t.id === filesTerm!.id)
+    if (idx === -1) return
+    this.filesRequestNonce += 1
+    const next = [...this.state.terminals]
+    next[idx] = { ...next[idx], filesActiveRequest: { path: relativePath, nonce: this.filesRequestNonce } }
+    this.state = { ...this.state, terminals: next, activeTerminalId: filesTerm.id }
+    this.notify()
+  }
+
   /** 綁定 Claude session UUID（新建時若已透過 --session-id 指定，啟動後即可呼叫） */
   setClaudeSessionId(id: string, sessionId: string): void {
     const idx = this.state.terminals.findIndex(t => t.id === id)

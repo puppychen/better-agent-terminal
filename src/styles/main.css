@@ -1526,6 +1526,14 @@ body {
   outline: none;
 }
 
+.terminal-tab-rename-prefix {
+  color: var(--text-secondary);
+  font-weight: 600;
+  margin-right: 2px;
+  user-select: none;
+  pointer-events: none;
+}
+
 .terminal-tab-close {
   background: none;
   border: none;
@@ -1557,6 +1565,7 @@ body {
   background: var(--bg-hover);
 }
 
+.terminal-tab-new-shell,
 .terminal-tab-new-claude,
 .terminal-tab-new-files {
   font-size: 13px;
@@ -1644,6 +1653,21 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.files-tab-entry-status {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: auto;
+  margin-right: 2px;
+}
+
+.files-tab-entry-status.status-modified  { background: #f4bc87; }  /* 黃 */
+.files-tab-entry-status.status-staged    { background: #7bbda4; }  /* 綠 */
+.files-tab-entry-status.status-untracked { background: #beb55b; }  /* 黃綠 */
+.files-tab-entry-status.status-deleted   { background: #cb6077; }  /* 紅 */
+.files-tab-entry-status.status-unmerged  { background: #e8722a; }  /* 橙 */
 
 .files-tab-empty,
 .files-tab-error {
@@ -1758,6 +1782,26 @@ body {
 
 .files-tab-editor-container .cm-editor.cm-focused {
   outline: none;
+}
+
+.files-tab-dirty-mark {
+  color: var(--accent-color);
+  font-weight: 700;
+}
+
+.files-tab-viewer-action:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.files-tab-viewer-action.active {
+  background: var(--bg-tertiary);
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+.file-conflict-footer {
+  gap: 6px;
 }
 
 /* Terminal Panel Container */

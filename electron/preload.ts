@@ -80,7 +80,11 @@ const electronAPI = {
   fs: {
     listDir: (workspaceCwd: string, relativePath: string) => ipcRenderer.invoke('fs:list-dir', workspaceCwd, relativePath),
     readFile: (workspaceCwd: string, relativePath: string) => ipcRenderer.invoke('fs:read-file', workspaceCwd, relativePath),
-    stat: (workspaceCwd: string, relativePath: string) => ipcRenderer.invoke('fs:stat', workspaceCwd, relativePath)
+    stat: (workspaceCwd: string, relativePath: string) => ipcRenderer.invoke('fs:stat', workspaceCwd, relativePath),
+    writeFile: (workspaceCwd: string, relativePath: string, content: string, expectedMtime?: number) => ipcRenderer.invoke('fs:write-file', workspaceCwd, relativePath, content, expectedMtime)
+  },
+  git: {
+    getFileStatus: (workspaceCwd: string) => ipcRenderer.invoke('git:file-status', workspaceCwd)
   },
   claudeSessions: {
     list: (cwd: string) => ipcRenderer.invoke('claude-sessions:list', cwd),

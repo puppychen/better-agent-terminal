@@ -7,6 +7,7 @@
 
 export interface EditorRuntime {
   EditorState: typeof import('@codemirror/state').EditorState
+  Compartment: typeof import('@codemirror/state').Compartment
   EditorView: typeof import('@codemirror/view').EditorView
   lineNumbers: typeof import('@codemirror/view').lineNumbers
   highlightActiveLine: typeof import('@codemirror/view').highlightActiveLine
@@ -14,8 +15,7 @@ export interface EditorRuntime {
   defaultKeymap: typeof import('@codemirror/commands').defaultKeymap
   history: typeof import('@codemirror/commands').history
   historyKeymap: typeof import('@codemirror/commands').historyKeymap
-  syntaxHighlighting: typeof import('@codemirror/language').syntaxHighlighting
-  defaultHighlightStyle: typeof import('@codemirror/language').defaultHighlightStyle
+  oneDark: typeof import('@codemirror/theme-one-dark').oneDark
 }
 
 let runtimePromise: Promise<EditorRuntime> | null = null
@@ -26,9 +26,10 @@ export function loadEditorRuntime(): Promise<EditorRuntime> {
     import('@codemirror/state'),
     import('@codemirror/view'),
     import('@codemirror/commands'),
-    import('@codemirror/language')
-  ]).then(([state, view, commands, language]) => ({
+    import('@codemirror/theme-one-dark')
+  ]).then(([state, view, commands, oneDark]) => ({
     EditorState: state.EditorState,
+    Compartment: state.Compartment,
     EditorView: view.EditorView,
     lineNumbers: view.lineNumbers,
     highlightActiveLine: view.highlightActiveLine,
@@ -36,8 +37,7 @@ export function loadEditorRuntime(): Promise<EditorRuntime> {
     defaultKeymap: commands.defaultKeymap,
     history: commands.history,
     historyKeymap: commands.historyKeymap,
-    syntaxHighlighting: language.syntaxHighlighting,
-    defaultHighlightStyle: language.defaultHighlightStyle
+    oneDark: oneDark.oneDark
   }))
   return runtimePromise
 }

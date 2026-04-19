@@ -103,9 +103,31 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
     await terminalStore.createTerminal(activeWorkspaceId, workspaceCwd, { type: 'files' })
   }, [activeWorkspaceId, workspaceCwd])
 
+  // Cmd+click 終端輸出路徑 → 開啟 Files tab 中的對應檔案
+  // text 形如 "src/foo.ts" 或 "src/foo.ts:42" 或 "/abs/path/foo.ts"；解析後丟給 store
+  const handleActivateLink = useCallback((text: string) => {
+    if (!activeWorkspaceId || !workspaceCwd) return
+    // 拆掉 :line:col 後綴（PR-A 不跳行；保留供 PR-D 使用）
+    const pathOnly = text.replace(/:\d+(?::\d+)?$/, '')
+    let relativePath: string
+    if (pathOnly.startsWith('/')) {
+      // 絕對路徑：必須在 workspace 內，否則放棄
+      const root = workspaceCwd.replace(/\/$/, '')
+      if (pathOnly !== root && !pathOnly.startsWith(root + '/')) return
+      relativePath = pathOnly === root ? '' : pathOnly.slice(root.length + 1)
+    } else if (pathOnly.startsWith('~/') || pathOnly === '~') {
+      // home 路徑暫不支援
+      return
+    } else {
+      relativePath = pathOnly
+    }
+    terminalStore.openFileInFilesTab(activeWorkspaceId, workspaceCwd, relativePath)
+  }, [activeWorkspaceId, workspaceCwd])
+
   // === Tab inline rename ===
   const [renamingId, setRenamingId] = useState<string | null>(null)
-  const [renameValue, setRenameValue] = useState('')
+  const [renamePrefix, setRenamePrefix] = useState('')   // 不可編輯的識別前綴（如 "[C] "）
+  const [renameValue, setRenameValue] = useState('')      // 可編輯的後綴部分
   const renameInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
@@ -115,16 +137,25 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
     }
   }, [renamingId])
 
+  /** 拆 label：如 "[C] 規劃-A" → ["[C] ", "規劃-A"]；無 prefix 則為 ["", label] */
+  const splitPrefix = (label: string): [string, string] => {
+    const m = label.match(/^(\[[CFT]\]\s)/)
+    return m ? [m[1], label.slice(m[1].length)] : ['', label]
+  }
+
   const startRename = (terminalId: string, currentLabel: string) => {
+    const [prefix, body] = splitPrefix(currentLabel)
     setRenamingId(terminalId)
-    setRenameValue(currentLabel)
+    setRenamePrefix(prefix)
+    setRenameValue(body)
   }
 
   const commitRename = () => {
     const id = renamingId
     if (!id) return
-    const newLabel = renameValue.trim()
-    if (newLabel) {
+    const body = renameValue.trim()
+    if (body) {
+      const newLabel = renamePrefix + body
       const term = terminalStore.getState().terminals.find(t => t.id === id)
       terminalStore.setLabel(id, newLabel, true)
       // 同步寫入 workspace 的 sessionId → label map（agent + 有 sessionId 才存）
@@ -133,11 +164,13 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
       }
     }
     setRenamingId(null)
+    setRenamePrefix('')
     setRenameValue('')
   }
 
   const cancelRename = () => {
     setRenamingId(null)
+    setRenamePrefix('')
     setRenameValue('')
   }
 
@@ -195,18 +228,21 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
             title="右鍵 / 雙擊 重新命名"
           >
             {renamingId === t.id ? (
-              <input
-                ref={renameInputRef}
-                className="terminal-tab-rename-input"
-                value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
-                onBlur={commitRename}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); commitRename() }
-                  else if (e.key === 'Escape') { e.preventDefault(); cancelRename() }
-                }}
-                onClick={(e) => e.stopPropagation()}
-              />
+              <>
+                {renamePrefix && <span className="terminal-tab-rename-prefix">{renamePrefix}</span>}
+                <input
+                  ref={renameInputRef}
+                  className="terminal-tab-rename-input"
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); commitRename() }
+                    else if (e.key === 'Escape') { e.preventDefault(); cancelRename() }
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </>
             ) : (
               <span className="terminal-tab-label">{t.label}</span>
             )}
@@ -219,8 +255,12 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
             </button>
           </div>
         ))}
-        <button className="terminal-tab-new" onClick={handleNewShell} title="New Terminal">
-          +
+        <button
+          className="terminal-tab-new terminal-tab-new-shell"
+          onClick={handleNewShell}
+          title="New Terminal"
+        >
+          + T
         </button>
         {onAddAgent && (
           <button
@@ -249,13 +289,18 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
           >
             {t.type === 'files' ? (
               <Suspense fallback={<div className="files-tab-placeholder">載入編輯器中…</div>}>
-                <FilesTab workspaceCwd={t.cwd} isActive={t.id === activeTerminalId} />
+                <FilesTab
+                  workspaceCwd={t.cwd}
+                  isActive={t.id === activeTerminalId}
+                  request={t.filesActiveRequest}
+                />
               </Suspense>
             ) : (
               <TerminalPanel
                 terminalId={t.id}
                 isActive={t.id === activeTerminalId}
                 onCycleTab={handleCycleTab}
+                onActivateLink={handleActivateLink}
               />
             )}
           </div>

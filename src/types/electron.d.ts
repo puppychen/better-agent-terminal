@@ -40,6 +40,16 @@ export type FsStatResult =
   | { ok: true; mtime: number; size: number; isDirectory: boolean }
   | { ok: false; error: 'OUT_OF_SCOPE' | 'NOT_FOUND' | 'IO_ERROR'; message?: string }
 
+export type FsWriteFileResult =
+  | { ok: true; mtime: number; size: number }
+  | { ok: false; error: 'OUT_OF_SCOPE' | 'CONFLICT' | 'NOT_FILE' | 'IO_ERROR'; message?: string; currentMtime?: number }
+
+export type GitFileStatus = 'modified' | 'staged' | 'untracked' | 'deleted' | 'unmerged'
+
+export type GitFileStatusResult =
+  | { ok: true; statuses: Record<string, GitFileStatus> }
+  | { ok: false; error: 'NOT_GIT_REPO' | 'GIT_NOT_FOUND' | 'TIMEOUT' | 'TOO_LARGE' | 'IO_ERROR'; message?: string }
+
 interface SubRepoInfo {
   name: string
   path: string
@@ -133,6 +143,10 @@ interface ElectronAPI {
     listDir: (workspaceCwd: string, relativePath: string) => Promise<FsListDirResult>
     readFile: (workspaceCwd: string, relativePath: string) => Promise<FsReadFileResult>
     stat: (workspaceCwd: string, relativePath: string) => Promise<FsStatResult>
+    writeFile: (workspaceCwd: string, relativePath: string, content: string, expectedMtime?: number) => Promise<FsWriteFileResult>
+  }
+  git: {
+    getFileStatus: (workspaceCwd: string) => Promise<GitFileStatusResult>
   }
   window: {
     onFocus: (callback: () => void) => () => void

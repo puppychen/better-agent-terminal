@@ -66,10 +66,16 @@ interface TerminalPanelProps {
   terminalId: string
   isActive: boolean
   onCycleTab?: (direction: 1 | -1) => void
+  /** Cmd+click 終端輸出的檔案路徑時觸發。text 為原始 match（含可能的 :line:col 後綴） */
+  onActivateLink?: (text: string) => void
 }
 
+// 偵測 path/to/file.ext 或 path/to/file.ext:123 或 path/to/file.ext:123:45
+// 邊界：前後不接英文/數字/斜線，避免抓到 URL 片段
+const FILE_LINK_REGEX = /(?<![\w/:])([\w./~\-]+\.[a-zA-Z]{1,8})(?::(\d+))?(?::(\d+))?(?![\w/])/g
+
 export const TerminalPanel = memo(function TerminalPanel({
-  terminalId, isActive, onCycleTab
+  terminalId, isActive, onCycleTab, onActivateLink
 }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -77,7 +83,9 @@ export const TerminalPanel = memo(function TerminalPanel({
   const isActiveRef = useRef(isActive)
   const doResizeRef = useRef<(() => void) | null>(null)
   const onCycleTabRef = useRef(onCycleTab)
+  const onActivateLinkRef = useRef(onActivateLink)
   useEffect(() => { onCycleTabRef.current = onCycleTab }, [onCycleTab])
+  useEffect(() => { onActivateLinkRef.current = onActivateLink }, [onActivateLink])
 
   useEffect(() => { isActiveRef.current = isActive }, [isActive])
 
@@ -128,6 +136,41 @@ export const TerminalPanel = memo(function TerminalPanel({
     terminal.open(containerRef.current)
     terminal.loadAddon(unicode11Addon)
     terminal.unicode.activeVersion = '11'
+
+    // 自訂 file path link provider — cmd+click 觸發 onActivateLink
+    const linkDisposable = terminal.registerLinkProvider({
+      provideLinks: (lineNumber, callback) => {
+        const buf = terminal.buffer.active
+        const line = buf.getLine(lineNumber - 1)
+        if (!line) { callback(undefined); return }
+        const text = line.translateToString(true)
+        if (!text) { callback(undefined); return }
+
+        const links: Array<{
+          range: { start: { x: number; y: number }; end: { x: number; y: number } }
+          text: string
+          activate: (event: MouseEvent, txt: string) => void
+        }> = []
+        FILE_LINK_REGEX.lastIndex = 0
+        let m: RegExpExecArray | null
+        while ((m = FILE_LINK_REGEX.exec(text)) !== null) {
+          const matchText = m[0]
+          const start = m.index
+          links.push({
+            range: {
+              start: { x: start + 1, y: lineNumber },
+              end: { x: start + matchText.length, y: lineNumber }
+            },
+            text: matchText,
+            activate: (event, txt) => {
+              if (!event.metaKey && !event.ctrlKey) return  // 僅 cmd/ctrl+click 觸發
+              onActivateLinkRef.current?.(txt)
+            }
+          })
+        }
+        callback(links)
+      }
+    })
 
     // WebGL renderer — LRU managed, auto-fallback to DOM
     attachWebgl(terminalId, terminal)
@@ -406,6 +449,7 @@ export const TerminalPanel = memo(function TerminalPanel({
       if (resizeTimer) clearTimeout(resizeTimer)
       resizeObserver.disconnect()
       doResizeRef.current = null
+      try { linkDisposable.dispose() } catch { /* already disposed */ }
       detachWebgl(terminalId)
       terminal.dispose()
     }

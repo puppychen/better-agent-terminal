@@ -45,8 +45,8 @@ export interface TerminalInstance {
   claudeSessionId?: string;
   /** 用戶手動改過 label 後設 true，停止自動跟隨 sessions-index summary */
   labelLockedByUser?: boolean;
-  /** Files tab 狀態：當前開啟檔案的相對路徑（type='files' 專用） */
-  filesActivePath?: string;
+  /** Files tab 開檔請求（type='files' 專用）；nonce 確保同檔重複請求也會觸發 */
+  filesActiveRequest?: { path: string; nonce: number };
 }
 
 export interface CreatePtyOptions {

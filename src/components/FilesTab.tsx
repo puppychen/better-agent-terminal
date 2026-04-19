@@ -1,18 +1,35 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import type { FsDirEntry } from '../types/electron'
+import type { FsDirEntry, GitFileStatus } from '../types/electron'
 import { loadEditorRuntime, loadLanguageExtension, type EditorRuntime } from './files-editor-runtime'
+import { FileConflictDialog } from './FileConflictDialog'
+
+const STATUS_LABEL: Record<GitFileStatus, string> = {
+  modified: 'M (已修改未 stage)',
+  staged: 'A (已 stage)',
+  untracked: '? (未追蹤)',
+  deleted: 'D (已刪除)',
+  unmerged: 'U (衝突)'
+}
 
 interface FilesTabProps {
   workspaceCwd: string
   isActive: boolean
+  /** 來自 cmd+click 終端路徑的開檔請求；nonce 遞增以觸發重載 */
+  request?: { path: string; nonce: number }
 }
 
 interface OpenFileState {
   relativePath: string
-  content: string
-  mtime: number
+  content: string             // 最後一次從磁碟讀到的內容
+  mtime: number               // 最後一次讀到的 mtime
   size: number
-  externallyChanged?: boolean  // PR-A 顯示「外部已變動」黃條，PR-B 接 reload 流程
+  dirty: boolean              // 編輯器內容與磁碟不同
+  externallyChanged?: boolean // on-focus 偵測到外部變動
+}
+
+interface ConflictState {
+  newContent: string          // 用戶想要寫入的內容
+  currentMtime: number        // 磁碟上目前 mtime
 }
 
 function joinPath(dir: string, name: string): string {
@@ -26,16 +43,45 @@ function parentPath(p: string): string {
   return idx <= 0 ? '' : p.slice(0, idx)
 }
 
-export function FilesTab({ workspaceCwd, isActive }: FilesTabProps) {
+const WRAP_PREF_KEY = 'baw.filesTab.lineWrap'
+const readWrapPref = (): boolean => {
+  const v = typeof localStorage !== 'undefined' ? localStorage.getItem(WRAP_PREF_KEY) : null
+  return v === null ? true : v === '1'  // 預設 true
+}
+const writeWrapPref = (wrap: boolean): void => {
+  try { localStorage.setItem(WRAP_PREF_KEY, wrap ? '1' : '0') } catch { /* ignore */ }
+}
+
+export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
   const [currentDir, setCurrentDir] = useState<string>('')
   const [entries, setEntries] = useState<FsDirEntry[]>([])
   const [dirError, setDirError] = useState<string | null>(null)
   const [openFile, setOpenFile] = useState<OpenFileState | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
+  const [conflict, setConflict] = useState<ConflictState | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [wrap, setWrap] = useState<boolean>(readWrapPref)
+  const [gitStatuses, setGitStatuses] = useState<Record<string, GitFileStatus>>({})
 
   const editorContainerRef = useRef<HTMLDivElement | null>(null)
   const editorRuntimeRef = useRef<EditorRuntime | null>(null)
   const editorViewRef = useRef<any>(null)
+  const wrapCompartmentRef = useRef<any>(null)
+  const openFileRef = useRef<OpenFileState | null>(null)
+  const saveRef = useRef<() => void>(() => {})
+
+  // 同步 openFile 到 ref（讓 CodeMirror keymap closure 可拿到最新值）
+  useEffect(() => { openFileRef.current = openFile }, [openFile])
+
+  // 取 git status（非 git repo / 失敗皆 graceful，不打擾用戶）
+  const refreshGitStatuses = useCallback(async () => {
+    const result = await window.electronAPI.git.getFileStatus(workspaceCwd)
+    if (result.ok) {
+      setGitStatuses(result.statuses)
+    } else {
+      setGitStatuses({})
+    }
+  }, [workspaceCwd])
 
   // 載入指定目錄
   const loadDir = useCallback(async (dir: string) => {
@@ -49,9 +95,11 @@ export function FilesTab({ workspaceCwd, isActive }: FilesTabProps) {
     }
   }, [workspaceCwd])
 
-  // 開檔
+  // 開檔（讀檔 + 重設 dirty）
   const openFileAt = useCallback(async (relativePath: string) => {
     setFileError(null)
+    setSaveError(null)
+    setConflict(null)
     const result = await window.electronAPI.fs.readFile(workspaceCwd, relativePath)
     if (!result.ok) {
       const errMsg: Record<string, string> = {
@@ -66,13 +114,67 @@ export function FilesTab({ workspaceCwd, isActive }: FilesTabProps) {
       setOpenFile(null)
       return
     }
-    setOpenFile({ relativePath, content: result.content, mtime: result.mtime, size: result.size })
+    setOpenFile({ relativePath, content: result.content, mtime: result.mtime, size: result.size, dirty: false })
   }, [workspaceCwd])
 
-  // 初始載入根目錄
+  // save 流程（共用：Cmd+S / 衝突對話框「覆寫」按鈕）
+  const performSave = useCallback(async (forceOverwrite = false) => {
+    const file = openFileRef.current
+    if (!file) return
+    const view = editorViewRef.current
+    if (!view) return
+    const newContent = view.state.doc.toString()
+
+    setSaveError(null)
+    const result = await window.electronAPI.fs.writeFile(
+      workspaceCwd,
+      file.relativePath,
+      newContent,
+      forceOverwrite ? undefined : file.mtime
+    )
+
+    if (result.ok) {
+      setOpenFile(prev => prev && prev.relativePath === file.relativePath
+        ? { ...prev, content: newContent, mtime: result.mtime, size: result.size, dirty: false, externallyChanged: false }
+        : prev)
+      setConflict(null)
+      refreshGitStatuses()
+      return
+    }
+
+    if (result.error === 'CONFLICT') {
+      setConflict({ newContent, currentMtime: result.currentMtime ?? 0 })
+      return
+    }
+
+    const errMsg: Record<string, string> = {
+      OUT_OF_SCOPE: '路徑超出 workspace 範圍',
+      NOT_FILE: '目標不是檔案',
+      IO_ERROR: 'IO 錯誤'
+    }
+    setSaveError(errMsg[result.error] ?? result.error)
+  }, [workspaceCwd, refreshGitStatuses])
+
+  useEffect(() => { saveRef.current = () => { performSave() } }, [performSave])
+
+  // 初始載入根目錄 + git status
   useEffect(() => {
     loadDir('')
-  }, [loadDir])
+    refreshGitStatuses()
+  }, [loadDir, refreshGitStatuses])
+
+  // tab 重新獲得焦點 → refresh git status（捕捉外部 commit / stage）
+  useEffect(() => {
+    if (isActive) refreshGitStatuses()
+  }, [isActive, refreshGitStatuses])
+
+  // 響應外部開檔請求（cmd+click）— 切到該檔所在目錄並開檔
+  useEffect(() => {
+    if (!request) return
+    const dir = parentPath(request.path)
+    loadDir(dir)
+    openFileAt(request.path)
+  }, [request?.nonce, request?.path, loadDir, openFileAt])
 
   // tab focus 時，對開啟中的檔案做 mtime 比對
   useEffect(() => {
@@ -80,17 +182,16 @@ export function FilesTab({ workspaceCwd, isActive }: FilesTabProps) {
     let cancelled = false
     window.electronAPI.fs.stat(workspaceCwd, openFile.relativePath).then((s) => {
       if (cancelled) return
-      if (s.ok && s.mtime !== openFile.mtime) {
+      if (s.ok && Math.abs(s.mtime - openFile.mtime) > 1) {
         setOpenFile(prev => prev && prev.relativePath === openFile.relativePath ? { ...prev, externallyChanged: true } : prev)
       }
     })
     return () => { cancelled = true }
-  }, [isActive, openFile?.relativePath, workspaceCwd])
+  }, [isActive, openFile?.relativePath, openFile?.mtime, workspaceCwd])
 
-  // 掛載 / 更新 CodeMirror editor
+  // 掛載 / 更新 CodeMirror editor（檔案切換時整個重建）
   useEffect(() => {
     if (!openFile) {
-      // 清掉舊 editor
       if (editorViewRef.current) {
         editorViewRef.current.destroy()
         editorViewRef.current = null
@@ -107,18 +208,39 @@ export function FilesTab({ workspaceCwd, isActive }: FilesTabProps) {
       const langExt = await loadLanguageExtension(openFile.relativePath)
       if (cancelled) return
 
-      const { EditorState, EditorView, lineNumbers, highlightActiveLine, keymap, defaultKeymap, history, historyKeymap, syntaxHighlighting, defaultHighlightStyle } = runtime
+      const { EditorState, Compartment, EditorView, lineNumbers, highlightActiveLine, keymap, defaultKeymap, history, historyKeymap, oneDark } = runtime
+      const wrapCompartment = new Compartment()
+      wrapCompartmentRef.current = wrapCompartment
 
-      // PR-A 為 read-only：editable=false
+      const updateListener = EditorView.updateListener.of((update) => {
+        if (!update.docChanged) return
+        const cur = openFileRef.current
+        if (!cur) return
+        const nowDirty = update.state.doc.toString() !== cur.content
+        if (cur.dirty !== nowDirty) {
+          setOpenFile(prev => prev && prev.relativePath === cur.relativePath ? { ...prev, dirty: nowDirty } : prev)
+        }
+      })
+
+      const saveBinding = keymap.of([
+        {
+          key: 'Mod-s',
+          preventDefault: true,
+          run: () => { saveRef.current(); return true }
+        }
+      ])
+
       const state = EditorState.create({
         doc: openFile.content,
         extensions: [
           lineNumbers(),
           highlightActiveLine(),
           history(),
-          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          oneDark,
+          wrapCompartment.of(wrap ? EditorView.lineWrapping : []),
+          saveBinding,
           keymap.of([...defaultKeymap, ...historyKeymap]),
-          EditorView.editable.of(false),
+          updateListener,
           EditorView.theme({
             '&': { height: '100%', fontSize: '13px' },
             '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }
@@ -127,7 +249,6 @@ export function FilesTab({ workspaceCwd, isActive }: FilesTabProps) {
         ]
       })
 
-      // 銷毀舊 view 並建新 view（檔案切換時整個重建較簡單）
       if (editorViewRef.current) {
         editorViewRef.current.destroy()
         editorViewRef.current = null
@@ -137,9 +258,7 @@ export function FilesTab({ workspaceCwd, isActive }: FilesTabProps) {
 
     setupEditor()
 
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [openFile?.relativePath, openFile?.content])
 
   // 元件卸載時銷毀 editor
@@ -151,6 +270,25 @@ export function FilesTab({ workspaceCwd, isActive }: FilesTabProps) {
       }
     }
   }, [])
+
+  // wrap 設定變化時動態 reconfigure（不重建 editor）
+  useEffect(() => {
+    const view = editorViewRef.current
+    const compartment = wrapCompartmentRef.current
+    const runtime = editorRuntimeRef.current
+    if (!view || !compartment || !runtime) return
+    view.dispatch({
+      effects: compartment.reconfigure(wrap ? runtime.EditorView.lineWrapping : [])
+    })
+  }, [wrap])
+
+  const handleToggleWrap = () => {
+    setWrap(prev => {
+      const next = !prev
+      writeWrapPref(next)
+      return next
+    })
+  }
 
   const handleEntryClick = (entry: FsDirEntry) => {
     const next = joinPath(currentDir, entry.name)
@@ -176,6 +314,19 @@ export function FilesTab({ workspaceCwd, isActive }: FilesTabProps) {
     window.electronAPI.shell.openPath(absolute)
   }
 
+  const handleSaveClick = () => performSave()
+
+  const handleConflictOverwrite = async () => {
+    await performSave(true)
+  }
+
+  const handleConflictReload = () => {
+    setConflict(null)
+    if (openFile) openFileAt(openFile.relativePath)
+  }
+
+  const handleConflictCancel = () => setConflict(null)
+
   return (
     <div className="files-tab">
       <div className="files-tab-tree">
@@ -192,17 +343,27 @@ export function FilesTab({ workspaceCwd, isActive }: FilesTabProps) {
             </div>
           )}
           {dirError && <div className="files-tab-error">{dirError}</div>}
-          {entries.map(e => (
-            <div
-              key={e.name}
-              className={`files-tab-entry ${e.isDirectory ? 'is-dir' : ''} ${openFile?.relativePath === joinPath(currentDir, e.name) ? 'active' : ''}`}
-              onClick={() => handleEntryClick(e)}
-              title={e.name}
-            >
-              <span className="files-tab-entry-icon">{e.isDirectory ? '📁' : '📄'}</span>
-              <span className="files-tab-entry-name">{e.name}{e.isSymlink ? ' ↗' : ''}</span>
-            </div>
-          ))}
+          {entries.map(e => {
+            const entryPath = joinPath(currentDir, e.name)
+            const status = !e.isDirectory ? gitStatuses[entryPath] : undefined
+            return (
+              <div
+                key={e.name}
+                className={`files-tab-entry ${e.isDirectory ? 'is-dir' : ''} ${openFile?.relativePath === entryPath ? 'active' : ''}`}
+                onClick={() => handleEntryClick(e)}
+                title={e.name}
+              >
+                <span className="files-tab-entry-icon">{e.isDirectory ? '📁' : '📄'}</span>
+                <span className="files-tab-entry-name">{e.name}{e.isSymlink ? ' ↗' : ''}</span>
+                {status && (
+                  <span
+                    className={`files-tab-entry-status status-${status}`}
+                    title={STATUS_LABEL[status]}
+                  />
+                )}
+              </div>
+            )
+          })}
           {!dirError && entries.length === 0 && (
             <div className="files-tab-empty">(空目錄)</div>
           )}
@@ -211,15 +372,32 @@ export function FilesTab({ workspaceCwd, isActive }: FilesTabProps) {
 
       <div className="files-tab-viewer">
         {!openFile && !fileError && (
-          <div className="files-tab-placeholder">點選左側檔案以預覽（read-only）</div>
+          <div className="files-tab-placeholder">點選左側檔案以開啟（Cmd+S 儲存）</div>
         )}
         {fileError && <div className="files-tab-error">{fileError}</div>}
         {openFile && (
           <>
             <div className="files-tab-viewer-header">
-              <span className="files-tab-viewer-path" title={openFile.relativePath}>{openFile.relativePath}</span>
+              <span className="files-tab-viewer-path" title={openFile.relativePath}>
+                {openFile.relativePath}{openFile.dirty && <span className="files-tab-dirty-mark"> ●</span>}
+              </span>
               <span className="files-tab-viewer-meta">{(openFile.size / 1024).toFixed(1)} KB</span>
-              <button className="files-tab-viewer-action" onClick={handleReload} title="重新載入">↻</button>
+              <button
+                className="files-tab-viewer-action"
+                onClick={handleSaveClick}
+                title="儲存 (Cmd+S)"
+                disabled={!openFile.dirty}
+              >
+                💾
+              </button>
+              <button
+                className={`files-tab-viewer-action ${wrap ? 'active' : ''}`}
+                onClick={handleToggleWrap}
+                title={wrap ? '關閉自動換行' : '開啟自動換行'}
+              >
+                ↩
+              </button>
+              <button className="files-tab-viewer-action" onClick={handleReload} title="重新載入（捨棄變更）">↻</button>
               <button className="files-tab-viewer-action" onClick={handleOpenInIDE} title="以系統預設應用程式開啟">↗</button>
             </div>
             {openFile.externallyChanged && (
@@ -227,10 +405,24 @@ export function FilesTab({ workspaceCwd, isActive }: FilesTabProps) {
                 檔案已被外部修改。<button className="files-tab-conflict-reload" onClick={handleReload}>重新載入</button>
               </div>
             )}
+            {saveError && (
+              <div className="files-tab-conflict-banner">
+                儲存失敗：{saveError}
+              </div>
+            )}
             <div ref={editorContainerRef} className="files-tab-editor-container" />
           </>
         )}
       </div>
+
+      {conflict && openFile && (
+        <FileConflictDialog
+          filePath={openFile.relativePath}
+          onOverwrite={handleConflictOverwrite}
+          onReload={handleConflictReload}
+          onCancel={handleConflictCancel}
+        />
+      )}
     </div>
   )
 }

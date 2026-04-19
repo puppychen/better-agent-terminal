@@ -32,6 +32,10 @@ export type StatResult =
   | { ok: true; mtime: number; size: number; isDirectory: boolean }
   | { ok: false; error: 'OUT_OF_SCOPE' | 'NOT_FOUND' | 'IO_ERROR'; message?: string }
 
+export type WriteFileResult =
+  | { ok: true; mtime: number; size: number }
+  | { ok: false; error: 'OUT_OF_SCOPE' | 'CONFLICT' | 'NOT_FILE' | 'IO_ERROR'; message?: string; currentMtime?: number }
+
 const MAX_FILE_SIZE = 5 * 1024 * 1024  // 5MB 上限，避免讀大檔
 const BINARY_PROBE_BYTES = 512          // 取前 512 byte 偵測二進位
 
@@ -90,6 +94,37 @@ export function stat(workspaceCwd: string, relativePath: string): StatResult {
     return { ok: true, mtime: s.mtimeMs, size: s.size, isDirectory: s.isDirectory() }
   } catch (e: any) {
     if (e?.code === 'ENOENT') return { ok: false, error: 'NOT_FOUND' }
+    return { ok: false, error: 'IO_ERROR', message: e?.message }
+  }
+}
+
+/**
+ * 寫入檔案。expectedMtime 提供時做樂觀鎖：
+ * - 檔案不存在或 mtime 一致 → 寫入並回傳新 mtime
+ * - mtime 不一致 → 回傳 CONFLICT + currentMtime
+ * - expectedMtime 為 undefined → 強制覆寫（適用「覆寫」按鈕路徑）
+ */
+export function writeFile(
+  workspaceCwd: string,
+  relativePath: string,
+  content: string,
+  expectedMtime?: number
+): WriteFileResult {
+  const target = safeResolve(workspaceCwd, relativePath)
+  if (!target) return { ok: false, error: 'OUT_OF_SCOPE' }
+  try {
+    if (expectedMtime !== undefined && fs.existsSync(target)) {
+      const s = fs.statSync(target)
+      if (!s.isFile()) return { ok: false, error: 'NOT_FILE' }
+      // mtimeMs 是浮點，比較時容許 1ms 誤差（部分檔案系統精度有限）
+      if (Math.abs(s.mtimeMs - expectedMtime) > 1) {
+        return { ok: false, error: 'CONFLICT', currentMtime: s.mtimeMs }
+      }
+    }
+    fs.writeFileSync(target, content, 'utf-8')
+    const s = fs.statSync(target)
+    return { ok: true, mtime: s.mtimeMs, size: s.size }
+  } catch (e: any) {
     return { ok: false, error: 'IO_ERROR', message: e?.message }
   }
 }

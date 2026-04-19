@@ -8,7 +8,8 @@ import type { WsServerConfig } from './ws-types'
 import { NotifyServer } from './notify-server'
 import type { NotifyConfig, NotifyEvent } from './notify-server'
 import { listSessions as csList, deleteSession as csDelete, watchSessions as csWatch } from './claude-sessions'
-import { listDir as fsListDir, readFile as fsReadFile, stat as fsStat } from './file-system'
+import { listDir as fsListDir, readFile as fsReadFile, stat as fsStat, writeFile as fsWriteFile } from './file-system'
+import { getFileStatuses as gitGetFileStatuses } from './git-status'
 
 // userData migration: Better Agent Terminal → Better Agent Workspace
 // Dev mode uses package.json "name" (lowercase), production uses "productName" (title case)
@@ -1279,4 +1280,12 @@ ipcMain.handle('fs:read-file', async (_event, workspaceCwd: string, relativePath
 
 ipcMain.handle('fs:stat', async (_event, workspaceCwd: string, relativePath: string) => {
   return fsStat(workspaceCwd, relativePath)
+})
+
+ipcMain.handle('fs:write-file', async (_event, workspaceCwd: string, relativePath: string, content: string, expectedMtime?: number) => {
+  return fsWriteFile(workspaceCwd, relativePath, content, expectedMtime)
+})
+
+ipcMain.handle('git:file-status', async (_event, workspaceCwd: string) => {
+  return gitGetFileStatuses(workspaceCwd)
 })
