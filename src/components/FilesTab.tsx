@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import type { FsDirEntry, GitFileStatus } from '../types/electron'
 import { loadEditorRuntime, loadLanguageExtension, type EditorRuntime } from './files-editor-runtime'
 import { FileConflictDialog } from './FileConflictDialog'
+import { useToast } from './Toast'
 
 const STATUS_LABEL: Record<GitFileStatus, string> = {
   modified: 'M (已修改未 stage)',
@@ -62,6 +63,8 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [wrap, setWrap] = useState<boolean>(readWrapPref)
   const [gitStatuses, setGitStatuses] = useState<Record<string, GitFileStatus>>({})
+  const [entryMenu, setEntryMenu] = useState<{ path: string; x: number; y: number } | null>(null)
+  const { showToast } = useToast()
 
   const editorContainerRef = useRef<HTMLDivElement | null>(null)
   const editorRuntimeRef = useRef<EditorRuntime | null>(null)
@@ -299,6 +302,46 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
     }
   }
 
+  const handleEntryContextMenu = (e: React.MouseEvent, entry: FsDirEntry) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setEntryMenu({ path: joinPath(currentDir, entry.name), x: e.clientX, y: e.clientY })
+  }
+
+  const closeEntryMenu = () => setEntryMenu(null)
+
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      showToast(`${label}已複製：${text}`, 'info')
+    } catch {
+      showToast('複製失敗', 'error')
+    }
+    closeEntryMenu()
+  }
+
+  const handleCopyRelative = () => {
+    if (entryMenu) copyToClipboard(entryMenu.path, '相對路徑')
+  }
+
+  const handleCopyAbsolute = () => {
+    if (!entryMenu) return
+    const absolute = workspaceCwd.replace(/\/$/, '') + '/' + entryMenu.path
+    copyToClipboard(absolute, '絕對路徑')
+  }
+
+  // 點外部關閉 menu
+  useEffect(() => {
+    if (!entryMenu) return
+    const handler = () => closeEntryMenu()
+    document.addEventListener('click', handler)
+    document.addEventListener('contextmenu', handler)
+    return () => {
+      document.removeEventListener('click', handler)
+      document.removeEventListener('contextmenu', handler)
+    }
+  }, [entryMenu])
+
   const handleGoUp = () => {
     if (!currentDir) return
     loadDir(parentPath(currentDir))
@@ -351,6 +394,7 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
                 key={e.name}
                 className={`files-tab-entry ${e.isDirectory ? 'is-dir' : ''} ${openFile?.relativePath === entryPath ? 'active' : ''}`}
                 onClick={() => handleEntryClick(e)}
+                onContextMenu={(ev) => handleEntryContextMenu(ev, e)}
                 title={e.name}
               >
                 <span className="files-tab-entry-icon">{e.isDirectory ? '📁' : '📄'}</span>
@@ -422,6 +466,22 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
           onReload={handleConflictReload}
           onCancel={handleConflictCancel}
         />
+      )}
+
+      {entryMenu && (
+        <div
+          className="files-tab-context-menu"
+          style={{ left: entryMenu.x, top: entryMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button className="files-tab-context-menu-item" onClick={handleCopyRelative}>
+            複製相對路徑
+          </button>
+          <button className="files-tab-context-menu-item" onClick={handleCopyAbsolute}>
+            複製絕對路徑
+          </button>
+        </div>
       )}
     </div>
   )

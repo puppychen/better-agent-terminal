@@ -74,14 +74,18 @@ class TerminalStore {
 
   async setActiveTerminal(id: string): Promise<void> {
     const prev = this.state.activeTerminalId
-    if (prev === id) return
+    const target = this.state.terminals.find(t => t.id === id)
+    const needsClearUnread = target?.unread === true
+
+    // prev === id 且無 unread 要清 → 真正不用動
+    if (prev === id && !needsClearUnread) return
 
     // 不 deactivate/activate — 所有 terminal 永遠在 activeSet，持續接收 IPC
     // 搭配 visibility:hidden CSS，切 tab 時畫面是最新狀態，零 replay 零 SIGWINCH
-    // 切到該 tab 順便清除 unread 標記
-    const terminals = this.state.terminals.map(t =>
-      t.id === id && t.unread ? { ...t, unread: false } : t
-    )
+    // 切到該 tab（或重新點已 active tab）順便清除 unread 標記
+    const terminals = needsClearUnread
+      ? this.state.terminals.map(t => t.id === id ? { ...t, unread: false } : t)
+      : this.state.terminals
     this.state = { ...this.state, terminals, activeTerminalId: id }
     this.notify()
   }

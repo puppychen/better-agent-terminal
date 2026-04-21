@@ -200,13 +200,39 @@ function AppContent() {
     const watched = new Set<string>()
 
     const refreshLabelsForCwd = async (cwd: string) => {
-      const agents = terminalStore.getState().terminals
-        .filter(t => t.type === 'agent' && t.agentType === 'claude' && t.cwd === cwd && t.claudeSessionId)
-      if (agents.length === 0) return
+      const allAgents = terminalStore.getState().terminals
+        .filter(t => t.type === 'agent' && t.agentType === 'claude' && t.cwd === cwd)
+      if (allAgents.length === 0) return
       const result = await window.electronAPI.claudeSessions.list(cwd)
       if (!result.ok) return
-      for (const term of agents) {
-        const entry = result.entries.find(e => e.sessionId === term.claudeSessionId)
+
+      // === Phase 1: 回填未綁 sessionId 的 -c agent ===
+      // 啟發式：對 modified 在 terminal createdAt 之後且未被別人綁的 entry，
+      // 按 modified 升序與 unbound terminal createdAt 升序 1:1 配對。
+      const unboundAgents = allAgents.filter(t => !t.claudeSessionId)
+      const filledMap = new Map<string, string>()  // terminalId → sessionId
+      if (unboundAgents.length > 0) {
+        const usedSessionIds = new Set(allAgents.map(a => a.claudeSessionId).filter(Boolean) as string[])
+        const minCreatedAt = Math.min(...unboundAgents.map(t => t.createdAt))
+        const candidates = result.entries
+          .filter(e => new Date(e.modified).getTime() >= minCreatedAt)
+          .filter(e => !usedSessionIds.has(e.sessionId))
+          .sort((a, b) => new Date(a.modified).getTime() - new Date(b.modified).getTime())
+        const sortedUnbound = [...unboundAgents].sort((a, b) => a.createdAt - b.createdAt)
+        sortedUnbound.forEach((agent, idx) => {
+          const entry = candidates[idx]
+          if (entry) {
+            filledMap.set(agent.id, entry.sessionId)
+            terminalStore.setClaudeSessionId(agent.id, entry.sessionId)
+          }
+        })
+      }
+
+      // === Phase 2: 對所有有 sessionId（含剛回填）的 agent 套 label ===
+      for (const term of allAgents) {
+        const sessionId = filledMap.get(term.id) ?? term.claudeSessionId
+        if (!sessionId) continue
+        const entry = result.entries.find(e => e.sessionId === sessionId)
         if (!entry) continue
         const summary = entry.summary?.trim()
         const fp = (entry.firstPrompt || '').trim()
