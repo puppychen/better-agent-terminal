@@ -297,7 +297,7 @@ function AppContent() {
     terminalStore.createTerminal(workspaceId, cwd, {
       type: 'agent',
       agentType: 'claude',
-      initialCommand: 'claude -c --permission-mode bypassPermissions',
+      initialCommand: `claude -c --model 'claude-opus-4-6[1M]' --permission-mode bypassPermissions`,
       labelLockedByUser: true  // 鎖定 default label，避免 onChange 誤套用其他 entry summary
     })
   }, [])
@@ -307,8 +307,18 @@ function AppContent() {
     terminalStore.createTerminal(workspaceId, cwd, {
       type: 'agent',
       agentType: 'claude',
-      initialCommand: `claude --session-id ${sessionId} --permission-mode bypassPermissions`,
+      initialCommand: `claude --session-id ${sessionId} --model 'claude-opus-4-6[1M]' --permission-mode bypassPermissions`,
       claudeSessionId: sessionId
+    })
+  }, [])
+
+  // === Codex Agent launch ===
+  // resume --last 接最近 session；首次無歷史時 fallback 新建
+  const handleAddCodexAgent = useCallback((workspaceId: string, cwd: string) => {
+    terminalStore.createTerminal(workspaceId, cwd, {
+      type: 'agent',
+      agentType: 'codex',
+      initialCommand: 'codex resume --last --full-auto || codex --full-auto'
     })
   }, [])
 
@@ -357,6 +367,7 @@ function AppContent() {
         workspaceCwd={activeWorkspace?.folderPath ?? null}
         onCycleAgent={handleCycleAgent}
         onAddAgent={handleAddAgent}
+        onAddCodexAgent={handleAddCodexAgent}
         onRequestCloseTab={(id) => {
           const terminal = terminalStore.getState().terminals.find(t => t.id === id)
           if (!terminal) return

@@ -1567,6 +1567,7 @@ body {
 
 .terminal-tab-new-shell,
 .terminal-tab-new-claude,
+.terminal-tab-new-codex,
 .terminal-tab-new-files {
   font-size: 13px;
   font-weight: 600;
@@ -1587,9 +1588,104 @@ body {
 .files-tab-tree {
   display: flex;
   flex-direction: column;
-  width: 240px;
-  min-width: 180px;
+  flex-shrink: 0;
+  /* width 由 React inline style 控制（splitter 拖移用） */
   border-right: 1px solid var(--border-color);
+  overflow: hidden;
+}
+
+.files-tab-splitter {
+  flex-shrink: 0;
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.files-tab-splitter:hover,
+.files-tab-splitter:active {
+  background: var(--accent-color);
+}
+
+.files-tab-right {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.files-tab-files-bar {
+  display: flex;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.files-tab-files-bar::-webkit-scrollbar { height: 4px; }
+.files-tab-files-bar::-webkit-scrollbar-thumb { background: var(--border-color); }
+
+.files-tab-file-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px 5px 10px;
+  border-right: 1px solid var(--border-color);
+  cursor: pointer;
+  font-size: 12px;
+  flex-shrink: 0;
+  max-width: 200px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.files-tab-file-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.files-tab-file-tab.active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--bg-primary);
+  margin-bottom: -1px;
+}
+
+.files-tab-file-tab-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.files-tab-file-tab-close {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.files-tab-file-tab:hover .files-tab-file-tab-close,
+.files-tab-file-tab.active .files-tab-file-tab-close { opacity: 0.6; }
+.files-tab-file-tab-close:hover { opacity: 1 !important; background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+.files-tab-entry-caret {
+  flex-shrink: 0;
+  width: 10px;
+  font-size: 9px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.files-tab-editor-area {
+  flex: 1;
+  position: relative;
   overflow: hidden;
 }
 
@@ -1799,9 +1895,16 @@ body {
 }
 
 .files-tab-editor-container {
-  flex: 1;
+  position: absolute;
+  inset: 0;
   overflow: hidden;
   background: var(--bg-primary);
+  visibility: hidden;
+}
+
+/* 用 inherit 而非 visible，避免覆蓋父層 .terminal-panel-wrapper(非 active) 的 hidden */
+.files-tab-editor-container.active {
+  visibility: inherit;
 }
 
 .files-tab-editor-container .cm-editor {

@@ -304,7 +304,7 @@ export function Sidebar({
       if (result.running && result.type) {
         await window.electronAPI.shell.focusAgent(workspace.folderPath, result.type as 'claude')
       } else {
-        window.electronAPI.shell.openTerminalWithCommand(workspace.folderPath, 'claude -c --permission-mode bypassPermissions')
+        window.electronAPI.shell.openTerminalWithCommand(workspace.folderPath, `claude -c --model 'claude-opus-4-6[1M]' --permission-mode bypassPermissions`)
       }
     }
   }

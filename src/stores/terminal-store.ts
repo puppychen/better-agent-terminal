@@ -35,7 +35,8 @@ class TerminalStore {
 
     let label = options?.label
     if (!label) {
-      if (type === 'agent') label = `[C] ${folderName}`
+      if (type === 'agent' && options?.agentType === 'codex') label = `[X] ${folderName}`
+      else if (type === 'agent') label = `[C] ${folderName}`
       else if (type === 'files') label = `[F] ${folderName}`
       else label = `[T] ${folderName}`
     }

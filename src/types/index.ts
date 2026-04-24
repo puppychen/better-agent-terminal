@@ -1,5 +1,5 @@
 // Code Agent type for external Terminal
-export type CodeAgentType = 'claude';
+export type CodeAgentType = 'claude' | 'codex';
 
 export interface Workspace {
   id: string;

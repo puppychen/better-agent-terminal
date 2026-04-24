@@ -16,6 +16,8 @@ export interface EditorRuntime {
   history: typeof import('@codemirror/commands').history
   historyKeymap: typeof import('@codemirror/commands').historyKeymap
   oneDark: typeof import('@codemirror/theme-one-dark').oneDark
+  searchKeymap: typeof import('@codemirror/search').searchKeymap
+  search: typeof import('@codemirror/search').search
 }
 
 let runtimePromise: Promise<EditorRuntime> | null = null
@@ -26,8 +28,9 @@ export function loadEditorRuntime(): Promise<EditorRuntime> {
     import('@codemirror/state'),
     import('@codemirror/view'),
     import('@codemirror/commands'),
-    import('@codemirror/theme-one-dark')
-  ]).then(([state, view, commands, oneDark]) => ({
+    import('@codemirror/theme-one-dark'),
+    import('@codemirror/search')
+  ]).then(([state, view, commands, oneDark, searchMod]) => ({
     EditorState: state.EditorState,
     Compartment: state.Compartment,
     EditorView: view.EditorView,
@@ -37,7 +40,9 @@ export function loadEditorRuntime(): Promise<EditorRuntime> {
     defaultKeymap: commands.defaultKeymap,
     history: commands.history,
     historyKeymap: commands.historyKeymap,
-    oneDark: oneDark.oneDark
+    oneDark: oneDark.oneDark,
+    searchKeymap: searchMod.searchKeymap,
+    search: searchMod.search
   }))
   return runtimePromise
 }

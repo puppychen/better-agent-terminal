@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react'
 import type { FsDirEntry, GitFileStatus } from '../types/electron'
 import { loadEditorRuntime, loadLanguageExtension, type EditorRuntime } from './files-editor-runtime'
 import { FileConflictDialog } from './FileConflictDialog'
@@ -12,25 +12,56 @@ const STATUS_LABEL: Record<GitFileStatus, string> = {
   unmerged: 'U (衝突)'
 }
 
+const MAX_OPEN_FILES = 10
+
+const WRAP_PREF_KEY = 'baw.filesTab.lineWrap'
+const readWrapPref = (): boolean => {
+  const v = typeof localStorage !== 'undefined' ? localStorage.getItem(WRAP_PREF_KEY) : null
+  return v === null ? true : v === '1'
+}
+const writeWrapPref = (wrap: boolean): void => {
+  try { localStorage.setItem(WRAP_PREF_KEY, wrap ? '1' : '0') } catch { /* ignore */ }
+}
+
+const TREE_WIDTH_KEY = 'baw.filesTab.treeWidth'
+const readTreeWidthPref = (): number => {
+  const v = typeof localStorage !== 'undefined' ? localStorage.getItem(TREE_WIDTH_KEY) : null
+  if (!v) return 240
+  const n = Number(v)
+  return Number.isFinite(n) ? Math.max(150, Math.min(600, n)) : 240
+}
+const writeTreeWidthPref = (w: number): void => {
+  try { localStorage.setItem(TREE_WIDTH_KEY, String(Math.round(w))) } catch { /* ignore */ }
+}
+
 interface FilesTabProps {
   workspaceCwd: string
   isActive: boolean
-  /** 來自 cmd+click 終端路徑的開檔請求；nonce 遞增以觸發重載 */
   request?: { path: string; nonce: number }
 }
 
 interface OpenFileState {
-  relativePath: string
-  content: string             // 最後一次從磁碟讀到的內容
-  mtime: number               // 最後一次讀到的 mtime
+  path: string
+  content: string
+  mtime: number
   size: number
-  dirty: boolean              // 編輯器內容與磁碟不同
-  externallyChanged?: boolean // on-focus 偵測到外部變動
+  dirty: boolean
+  externallyChanged?: boolean
 }
 
 interface ConflictState {
-  newContent: string          // 用戶想要寫入的內容
-  currentMtime: number        // 磁碟上目前 mtime
+  path: string
+  newContent: string
+  currentMtime: number
+}
+
+interface VisibleItem {
+  path: string
+  name: string
+  isDirectory: boolean
+  isSymlink: boolean
+  depth: number
+  isExpanded: boolean
 }
 
 function joinPath(dir: string, name: string): string {
@@ -38,278 +69,371 @@ function joinPath(dir: string, name: string): string {
   return dir.endsWith('/') ? dir + name : dir + '/' + name
 }
 
-function parentPath(p: string): string {
-  if (!p || p === '.' || p === '') return ''
-  const idx = p.lastIndexOf('/')
-  return idx <= 0 ? '' : p.slice(0, idx)
+function basename(p: string): string {
+  const i = p.lastIndexOf('/')
+  return i === -1 ? p : p.slice(i + 1)
 }
 
-const WRAP_PREF_KEY = 'baw.filesTab.lineWrap'
-const readWrapPref = (): boolean => {
-  const v = typeof localStorage !== 'undefined' ? localStorage.getItem(WRAP_PREF_KEY) : null
-  return v === null ? true : v === '1'  // 預設 true
-}
-const writeWrapPref = (wrap: boolean): void => {
-  try { localStorage.setItem(WRAP_PREF_KEY, wrap ? '1' : '0') } catch { /* ignore */ }
+const FILE_ERR: Record<string, string> = {
+  TOO_LARGE: '檔案超過 5MB',
+  BINARY: '不支援二進位檔',
+  NOT_FILE: '不是檔案',
+  NOT_FOUND: '檔案不存在',
+  OUT_OF_SCOPE: '路徑超出 workspace 範圍',
+  IO_ERROR: 'IO 錯誤',
+  CONFLICT: '檔案衝突'
 }
 
 export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
-  const [currentDir, setCurrentDir] = useState<string>('')
-  const [entries, setEntries] = useState<FsDirEntry[]>([])
-  const [dirError, setDirError] = useState<string | null>(null)
-  const [openFile, setOpenFile] = useState<OpenFileState | null>(null)
-  const [fileError, setFileError] = useState<string | null>(null)
+  // === Tree state ===
+  const [dirCache, setDirCache] = useState<Map<string, FsDirEntry[]>>(new Map())
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [gitStatuses, setGitStatuses] = useState<Record<string, GitFileStatus>>({})
+
+  // === Open files ===
+  const [openFiles, setOpenFiles] = useState<OpenFileState[]>([])
+  const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
+
+  // === Splitter ===
+  const [treeWidth, setTreeWidth] = useState<number>(readTreeWidthPref)
+
+  // === Editor pref / state ===
+  const [wrap, setWrap] = useState<boolean>(readWrapPref)
   const [conflict, setConflict] = useState<ConflictState | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
-  const [wrap, setWrap] = useState<boolean>(readWrapPref)
-  const [gitStatuses, setGitStatuses] = useState<Record<string, GitFileStatus>>({})
-  const [entryMenu, setEntryMenu] = useState<{ path: string; x: number; y: number } | null>(null)
+  const [entryMenu, setEntryMenu] = useState<{ path: string; x: number; y: number; isDirectory: boolean } | null>(null)
+
   const { showToast } = useToast()
 
-  const editorContainerRef = useRef<HTMLDivElement | null>(null)
+  // === Refs ===
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const editorRuntimeRef = useRef<EditorRuntime | null>(null)
-  const editorViewRef = useRef<any>(null)
-  const wrapCompartmentRef = useRef<any>(null)
-  const openFileRef = useRef<OpenFileState | null>(null)
+  const editorViewsRef = useRef<Map<string, { view: any; wrapCompartment: any }>>(new Map())
+  const editorContainerRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const openFilesRef = useRef<OpenFileState[]>([])
+  const activeFilePathRef = useRef<string | null>(null)
   const saveRef = useRef<() => void>(() => {})
+  const isDraggingRef = useRef(false)
+  const pendingDraggedWidthRef = useRef<number>(treeWidth)
 
-  // 同步 openFile 到 ref（讓 CodeMirror keymap closure 可拿到最新值）
-  useEffect(() => { openFileRef.current = openFile }, [openFile])
+  useEffect(() => { openFilesRef.current = openFiles }, [openFiles])
+  useEffect(() => { activeFilePathRef.current = activeFilePath }, [activeFilePath])
 
-  // 取 git status（非 git repo / 失敗皆 graceful，不打擾用戶）
-  const refreshGitStatuses = useCallback(async () => {
-    const result = await window.electronAPI.git.getFileStatus(workspaceCwd)
-    if (result.ok) {
-      setGitStatuses(result.statuses)
-    } else {
-      setGitStatuses({})
-    }
-  }, [workspaceCwd])
-
-  // 載入指定目錄
-  const loadDir = useCallback(async (dir: string) => {
-    setDirError(null)
+  // === Directory loading ===
+  const loadDir = useCallback(async (dir: string): Promise<void> => {
     const result = await window.electronAPI.fs.listDir(workspaceCwd, dir)
     if (result.ok) {
-      setEntries(result.entries)
-      setCurrentDir(dir)
-    } else {
-      setDirError(`無法讀取目錄（${result.error}${result.message ? ': ' + result.message : ''}）`)
+      setDirCache(prev => {
+        const next = new Map(prev)
+        next.set(dir, result.entries)
+        return next
+      })
     }
   }, [workspaceCwd])
 
-  // 開檔（讀檔 + 重設 dirty）
-  const openFileAt = useCallback(async (relativePath: string) => {
-    setFileError(null)
-    setSaveError(null)
-    setConflict(null)
-    const result = await window.electronAPI.fs.readFile(workspaceCwd, relativePath)
-    if (!result.ok) {
-      const errMsg: Record<string, string> = {
-        TOO_LARGE: '檔案超過 5MB 大小限制',
-        BINARY: '不支援二進位檔',
-        NOT_FILE: '不是檔案',
-        NOT_FOUND: '檔案不存在',
-        OUT_OF_SCOPE: '路徑超出 workspace 範圍',
-        IO_ERROR: 'IO 錯誤'
-      }
-      setFileError(errMsg[result.error] ?? result.error)
-      setOpenFile(null)
+  const toggleDir = useCallback(async (dir: string): Promise<void> => {
+    if (expanded.has(dir)) {
+      setExpanded(prev => {
+        const next = new Set(prev)
+        next.delete(dir)
+        return next
+      })
+    } else {
+      if (!dirCache.has(dir)) await loadDir(dir)
+      setExpanded(prev => new Set(prev).add(dir))
+    }
+  }, [expanded, dirCache, loadDir])
+
+  // Root 初始
+  useEffect(() => {
+    loadDir('')
+  }, [loadDir])
+
+  // === Git status ===
+  const refreshGitStatuses = useCallback(async (): Promise<void> => {
+    const result = await window.electronAPI.git.getFileStatus(workspaceCwd)
+    if (result.ok) setGitStatuses(result.statuses)
+    else setGitStatuses({})
+  }, [workspaceCwd])
+
+  useEffect(() => { refreshGitStatuses() }, [refreshGitStatuses])
+  useEffect(() => { if (isActive) refreshGitStatuses() }, [isActive, refreshGitStatuses])
+
+  // === Open / close file ===
+  const openFileAt = useCallback(async (relativePath: string): Promise<void> => {
+    // 若已開，直接切
+    const existing = openFilesRef.current.find(f => f.path === relativePath)
+    if (existing) {
+      setActiveFilePath(relativePath)
       return
     }
-    setOpenFile({ relativePath, content: result.content, mtime: result.mtime, size: result.size, dirty: false })
-  }, [workspaceCwd])
+    // 讀檔
+    const result = await window.electronAPI.fs.readFile(workspaceCwd, relativePath)
+    if (!result.ok) {
+      showToast(FILE_ERR[result.error] ?? result.error, 'error')
+      return
+    }
+    // LRU 檢查
+    if (openFilesRef.current.length >= MAX_OPEN_FILES) {
+      const cleanest = openFilesRef.current.find(f => !f.dirty)
+      if (!cleanest) {
+        showToast(`已開啟 ${MAX_OPEN_FILES} 個檔，全部未儲存；請先儲存或關閉`, 'error')
+        return
+      }
+      setOpenFiles(prev => prev.filter(f => f.path !== cleanest.path))
+    }
+    const newFile: OpenFileState = {
+      path: relativePath,
+      content: result.content,
+      mtime: result.mtime,
+      size: result.size,
+      dirty: false
+    }
+    setOpenFiles(prev => [...prev, newFile])
+    setActiveFilePath(relativePath)
+  }, [workspaceCwd, showToast])
 
-  // save 流程（共用：Cmd+S / 衝突對話框「覆寫」按鈕）
-  const performSave = useCallback(async (forceOverwrite = false) => {
-    const file = openFileRef.current
+  const closeFile = useCallback((relativePath: string): void => {
+    const f = openFilesRef.current.find(x => x.path === relativePath)
+    if (f?.dirty && !window.confirm(`「${relativePath}」有未儲存變更，確定關閉？`)) return
+    const idx = openFilesRef.current.findIndex(x => x.path === relativePath)
+    const next = openFilesRef.current[idx + 1] || openFilesRef.current[idx - 1]
+    setOpenFiles(prev => prev.filter(x => x.path !== relativePath))
+    if (activeFilePathRef.current === relativePath) {
+      setActiveFilePath(next?.path ?? null)
+    }
+  }, [])
+
+  // 響應 request (cmd+click)
+  useEffect(() => {
+    if (!request) return
+    openFileAt(request.path)
+  }, [request?.nonce, request?.path, openFileAt])
+
+  // === Editor lifecycle ===
+  // 每個 open file 對應一個 EditorView；render 產生 container 後 useLayoutEffect 建 view
+  useLayoutEffect(() => {
+    let cancelled = false
+    const setup = async () => {
+      const runtime = editorRuntimeRef.current ?? (editorRuntimeRef.current = await loadEditorRuntime())
+      if (cancelled) return
+      const {
+        EditorState, Compartment, EditorView, lineNumbers, highlightActiveLine,
+        keymap, defaultKeymap, history, historyKeymap, oneDark, searchKeymap, search
+      } = runtime
+
+      // 新增 view
+      for (const f of openFiles) {
+        if (editorViewsRef.current.has(f.path)) continue
+        const container = editorContainerRefs.current.get(f.path)
+        if (!container) continue
+        const wrapCompartment = new Compartment()
+        const langExt = await loadLanguageExtension(f.path)
+        if (cancelled) return
+        const updateListener = EditorView.updateListener.of((update: any) => {
+          if (!update.docChanged) return
+          const cur = openFilesRef.current.find(x => x.path === f.path)
+          if (!cur) return
+          const nowDirty = update.state.doc.toString() !== cur.content
+          if (cur.dirty !== nowDirty) {
+            setOpenFiles(prev => prev.map(x => x.path === f.path ? { ...x, dirty: nowDirty } : x))
+          }
+        })
+        const saveBinding = keymap.of([{
+          key: 'Mod-s',
+          preventDefault: true,
+          run: () => { saveRef.current(); return true }
+        }])
+        const state = EditorState.create({
+          doc: f.content,
+          extensions: [
+            lineNumbers(),
+            highlightActiveLine(),
+            history(),
+            search(),
+            oneDark,
+            wrapCompartment.of(wrap ? EditorView.lineWrapping : []),
+            saveBinding,
+            keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+            updateListener,
+            EditorView.theme({
+              '&': { height: '100%', fontSize: '13px' },
+              '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }
+            }),
+            ...(langExt as any[])
+          ]
+        })
+        const view = new EditorView({ state, parent: container })
+        editorViewsRef.current.set(f.path, { view, wrapCompartment })
+      }
+
+      // 移除已 close 的 view
+      const openPathsSet = new Set(openFiles.map(f => f.path))
+      for (const [p, entry] of Array.from(editorViewsRef.current.entries())) {
+        if (!openPathsSet.has(p)) {
+          try { entry.view.destroy() } catch { /* already */ }
+          editorViewsRef.current.delete(p)
+          editorContainerRefs.current.delete(p)
+        }
+      }
+    }
+    setup()
+    return () => { cancelled = true }
+  }, [openFiles, wrap])
+
+  // wrap 切換 → 對所有已存在的 view 做 reconfigure
+  useEffect(() => {
+    const runtime = editorRuntimeRef.current
+    if (!runtime) return
+    for (const [, { view, wrapCompartment }] of editorViewsRef.current) {
+      view.dispatch({ effects: wrapCompartment.reconfigure(wrap ? runtime.EditorView.lineWrapping : []) })
+    }
+  }, [wrap])
+
+  // 元件卸載 dispose all views
+  useEffect(() => {
+    return () => {
+      for (const [, { view }] of editorViewsRef.current) {
+        try { view.destroy() } catch { /* ignore */ }
+      }
+      editorViewsRef.current.clear()
+      editorContainerRefs.current.clear()
+    }
+  }, [])
+
+  // === on-focus mtime check（只對 active file） ===
+  useEffect(() => {
+    if (!isActive || !activeFilePath) return
+    const file = openFilesRef.current.find(f => f.path === activeFilePath)
     if (!file) return
-    const view = editorViewRef.current
-    if (!view) return
-    const newContent = view.state.doc.toString()
+    let cancelled = false
+    window.electronAPI.fs.stat(workspaceCwd, activeFilePath).then((s) => {
+      if (cancelled) return
+      if (s.ok && Math.abs(s.mtime - file.mtime) > 1) {
+        setOpenFiles(prev => prev.map(x => x.path === activeFilePath ? { ...x, externallyChanged: true } : x))
+      }
+    })
+    return () => { cancelled = true }
+  }, [isActive, activeFilePath, workspaceCwd])
 
+  // === Save ===
+  const performSave = useCallback(async (forceOverwrite = false): Promise<void> => {
+    const path = activeFilePathRef.current
+    if (!path) return
+    const file = openFilesRef.current.find(f => f.path === path)
+    const entry = editorViewsRef.current.get(path)
+    if (!file || !entry) return
+    const newContent = entry.view.state.doc.toString()
     setSaveError(null)
     const result = await window.electronAPI.fs.writeFile(
-      workspaceCwd,
-      file.relativePath,
-      newContent,
-      forceOverwrite ? undefined : file.mtime
+      workspaceCwd, path, newContent, forceOverwrite ? undefined : file.mtime
     )
-
     if (result.ok) {
-      setOpenFile(prev => prev && prev.relativePath === file.relativePath
-        ? { ...prev, content: newContent, mtime: result.mtime, size: result.size, dirty: false, externallyChanged: false }
-        : prev)
+      setOpenFiles(prev => prev.map(f => f.path === path
+        ? { ...f, content: newContent, mtime: result.mtime, size: result.size, dirty: false, externallyChanged: false }
+        : f))
       setConflict(null)
       refreshGitStatuses()
       return
     }
-
     if (result.error === 'CONFLICT') {
-      setConflict({ newContent, currentMtime: result.currentMtime ?? 0 })
+      setConflict({ path, newContent, currentMtime: result.currentMtime ?? 0 })
       return
     }
-
-    const errMsg: Record<string, string> = {
-      OUT_OF_SCOPE: '路徑超出 workspace 範圍',
-      NOT_FILE: '目標不是檔案',
-      IO_ERROR: 'IO 錯誤'
-    }
-    setSaveError(errMsg[result.error] ?? result.error)
+    setSaveError(FILE_ERR[result.error] ?? result.error)
   }, [workspaceCwd, refreshGitStatuses])
 
   useEffect(() => { saveRef.current = () => { performSave() } }, [performSave])
 
-  // 初始載入根目錄 + git status
-  useEffect(() => {
-    loadDir('')
-    refreshGitStatuses()
-  }, [loadDir, refreshGitStatuses])
-
-  // tab 重新獲得焦點 → refresh git status（捕捉外部 commit / stage）
-  useEffect(() => {
-    if (isActive) refreshGitStatuses()
-  }, [isActive, refreshGitStatuses])
-
-  // 響應外部開檔請求（cmd+click）— 切到該檔所在目錄並開檔
-  useEffect(() => {
-    if (!request) return
-    const dir = parentPath(request.path)
-    loadDir(dir)
-    openFileAt(request.path)
-  }, [request?.nonce, request?.path, loadDir, openFileAt])
-
-  // tab focus 時，對開啟中的檔案做 mtime 比對
-  useEffect(() => {
-    if (!isActive || !openFile) return
-    let cancelled = false
-    window.electronAPI.fs.stat(workspaceCwd, openFile.relativePath).then((s) => {
-      if (cancelled) return
-      if (s.ok && Math.abs(s.mtime - openFile.mtime) > 1) {
-        setOpenFile(prev => prev && prev.relativePath === openFile.relativePath ? { ...prev, externallyChanged: true } : prev)
-      }
-    })
-    return () => { cancelled = true }
-  }, [isActive, openFile?.relativePath, openFile?.mtime, workspaceCwd])
-
-  // 掛載 / 更新 CodeMirror editor（檔案切換時整個重建）
-  useEffect(() => {
-    if (!openFile) {
-      if (editorViewRef.current) {
-        editorViewRef.current.destroy()
-        editorViewRef.current = null
-      }
+  const handleReload = useCallback(async (): Promise<void> => {
+    const path = activeFilePathRef.current
+    if (!path) return
+    const result = await window.electronAPI.fs.readFile(workspaceCwd, path)
+    if (!result.ok) {
+      showToast(FILE_ERR[result.error] ?? result.error, 'error')
       return
     }
-
-    let cancelled = false
-
-    const setupEditor = async () => {
-      const runtime = editorRuntimeRef.current ?? (editorRuntimeRef.current = await loadEditorRuntime())
-      if (cancelled || !editorContainerRef.current) return
-
-      const langExt = await loadLanguageExtension(openFile.relativePath)
-      if (cancelled) return
-
-      const { EditorState, Compartment, EditorView, lineNumbers, highlightActiveLine, keymap, defaultKeymap, history, historyKeymap, oneDark } = runtime
-      const wrapCompartment = new Compartment()
-      wrapCompartmentRef.current = wrapCompartment
-
-      const updateListener = EditorView.updateListener.of((update) => {
-        if (!update.docChanged) return
-        const cur = openFileRef.current
-        if (!cur) return
-        const nowDirty = update.state.doc.toString() !== cur.content
-        if (cur.dirty !== nowDirty) {
-          setOpenFile(prev => prev && prev.relativePath === cur.relativePath ? { ...prev, dirty: nowDirty } : prev)
-        }
+    setOpenFiles(prev => prev.map(f => f.path === path
+      ? { ...f, content: result.content, mtime: result.mtime, size: result.size, dirty: false, externallyChanged: false }
+      : f))
+    // 重灌 editor content
+    const entry = editorViewsRef.current.get(path)
+    const runtime = editorRuntimeRef.current
+    if (entry && runtime) {
+      const { EditorView } = runtime
+      entry.view.dispatch({
+        changes: { from: 0, to: entry.view.state.doc.length, insert: result.content },
+        selection: { anchor: 0 }
       })
-
-      const saveBinding = keymap.of([
-        {
-          key: 'Mod-s',
-          preventDefault: true,
-          run: () => { saveRef.current(); return true }
-        }
-      ])
-
-      const state = EditorState.create({
-        doc: openFile.content,
-        extensions: [
-          lineNumbers(),
-          highlightActiveLine(),
-          history(),
-          oneDark,
-          wrapCompartment.of(wrap ? EditorView.lineWrapping : []),
-          saveBinding,
-          keymap.of([...defaultKeymap, ...historyKeymap]),
-          updateListener,
-          EditorView.theme({
-            '&': { height: '100%', fontSize: '13px' },
-            '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }
-          }),
-          ...(langExt as any[])
-        ]
-      })
-
-      if (editorViewRef.current) {
-        editorViewRef.current.destroy()
-        editorViewRef.current = null
-      }
-      editorViewRef.current = new EditorView({ state, parent: editorContainerRef.current })
+      void EditorView  // 避免 unused warning
     }
+  }, [workspaceCwd, showToast])
 
-    setupEditor()
-
-    return () => { cancelled = true }
-  }, [openFile?.relativePath, openFile?.content])
-
-  // 元件卸載時銷毀 editor
+  // === Splitter drag ===
   useEffect(() => {
+    const handleMove = (e: MouseEvent) => {
+      if (!isDraggingRef.current || !containerRef.current) return
+      const rect = containerRef.current.getBoundingClientRect()
+      const w = Math.max(150, Math.min(600, e.clientX - rect.left))
+      pendingDraggedWidthRef.current = w
+      setTreeWidth(w)
+    }
+    const handleUp = () => {
+      if (!isDraggingRef.current) return
+      isDraggingRef.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      writeTreeWidthPref(pendingDraggedWidthRef.current)
+    }
+    document.addEventListener('mousemove', handleMove)
+    document.addEventListener('mouseup', handleUp)
     return () => {
-      if (editorViewRef.current) {
-        editorViewRef.current.destroy()
-        editorViewRef.current = null
-      }
+      document.removeEventListener('mousemove', handleMove)
+      document.removeEventListener('mouseup', handleUp)
     }
   }, [])
 
-  // wrap 設定變化時動態 reconfigure（不重建 editor）
-  useEffect(() => {
-    const view = editorViewRef.current
-    const compartment = wrapCompartmentRef.current
-    const runtime = editorRuntimeRef.current
-    if (!view || !compartment || !runtime) return
-    view.dispatch({
-      effects: compartment.reconfigure(wrap ? runtime.EditorView.lineWrapping : [])
-    })
-  }, [wrap])
-
-  const handleToggleWrap = () => {
-    setWrap(prev => {
-      const next = !prev
-      writeWrapPref(next)
-      return next
-    })
+  const startDragSplitter = () => {
+    isDraggingRef.current = true
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
   }
 
-  const handleEntryClick = (entry: FsDirEntry) => {
-    const next = joinPath(currentDir, entry.name)
-    if (entry.isDirectory) {
-      loadDir(next)
-    } else {
-      openFileAt(next)
+  // === Visible tree items（flatten） ===
+  const visibleItems = useMemo(() => {
+    const items: VisibleItem[] = []
+    const walk = (dir: string, depth: number) => {
+      const entries = dirCache.get(dir)
+      if (!entries) return
+      for (const e of entries) {
+        const fullPath = joinPath(dir, e.name)
+        items.push({
+          path: fullPath,
+          name: e.name,
+          isDirectory: e.isDirectory,
+          isSymlink: e.isSymlink,
+          depth,
+          isExpanded: e.isDirectory && expanded.has(fullPath)
+        })
+        if (e.isDirectory && expanded.has(fullPath)) walk(fullPath, depth + 1)
+      }
     }
-  }
+    walk('', 0)
+    return items
+  }, [dirCache, expanded])
 
-  const handleEntryContextMenu = (e: React.MouseEvent, entry: FsDirEntry) => {
+  const activeFile = useMemo(
+    () => openFiles.find(f => f.path === activeFilePath) ?? null,
+    [openFiles, activeFilePath]
+  )
+
+  // === Context menu ===
+  const handleEntryContextMenu = (e: React.MouseEvent, item: VisibleItem) => {
     e.preventDefault()
     e.stopPropagation()
-    setEntryMenu({ path: joinPath(currentDir, entry.name), x: e.clientX, y: e.clientY })
+    setEntryMenu({ path: item.path, x: e.clientX, y: e.clientY, isDirectory: item.isDirectory })
   }
-
   const closeEntryMenu = () => setEntryMenu(null)
-
   const copyToClipboard = async (text: string, label: string) => {
     try {
       await navigator.clipboard.writeText(text)
@@ -319,18 +443,12 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
     }
     closeEntryMenu()
   }
-
-  const handleCopyRelative = () => {
-    if (entryMenu) copyToClipboard(entryMenu.path, '相對路徑')
-  }
-
+  const handleCopyRelative = () => { if (entryMenu) copyToClipboard(entryMenu.path, '相對路徑') }
   const handleCopyAbsolute = () => {
     if (!entryMenu) return
     const absolute = workspaceCwd.replace(/\/$/, '') + '/' + entryMenu.path
     copyToClipboard(absolute, '絕對路徑')
   }
-
-  // 點外部關閉 menu
   useEffect(() => {
     if (!entryMenu) return
     const handler = () => closeEntryMenu()
@@ -342,63 +460,58 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
     }
   }, [entryMenu])
 
-  const handleGoUp = () => {
-    if (!currentDir) return
-    loadDir(parentPath(currentDir))
+  // === Tree item click ===
+  const handleItemClick = (item: VisibleItem) => {
+    if (item.isDirectory) toggleDir(item.path)
+    else openFileAt(item.path)
   }
 
-  const handleReload = () => {
-    if (openFile) openFileAt(openFile.relativePath)
+  // === Editor actions ===
+  const handleToggleWrap = () => {
+    setWrap(prev => {
+      const next = !prev
+      writeWrapPref(next)
+      return next
+    })
   }
-
   const handleOpenInIDE = () => {
-    if (!openFile) return
-    const absolute = workspaceCwd.replace(/\/$/, '') + '/' + openFile.relativePath
+    if (!activeFile) return
+    const absolute = workspaceCwd.replace(/\/$/, '') + '/' + activeFile.path
     window.electronAPI.shell.openPath(absolute)
   }
-
-  const handleSaveClick = () => performSave()
-
-  const handleConflictOverwrite = async () => {
-    await performSave(true)
-  }
-
-  const handleConflictReload = () => {
+  const handleConflictOverwrite = () => performSave(true)
+  const handleConflictReload = async () => {
+    if (!conflict) return
     setConflict(null)
-    if (openFile) openFileAt(openFile.relativePath)
+    await handleReload()
   }
-
   const handleConflictCancel = () => setConflict(null)
 
   return (
-    <div className="files-tab">
-      <div className="files-tab-tree">
+    <div className="files-tab" ref={containerRef}>
+      {/* === LEFT：file tree === */}
+      <div className="files-tab-tree" style={{ width: treeWidth }}>
         <div className="files-tab-tree-header">
-          <span className="files-tab-tree-path" title={currentDir || '/'}>
-            {currentDir || '(workspace root)'}
-          </span>
+          <span className="files-tab-tree-path">{workspaceCwd.split('/').pop()}</span>
         </div>
         <div className="files-tab-tree-list">
-          {currentDir && (
-            <div className="files-tab-entry files-tab-entry-up" onClick={handleGoUp}>
-              <span className="files-tab-entry-icon">↰</span>
-              <span className="files-tab-entry-name">..</span>
-            </div>
-          )}
-          {dirError && <div className="files-tab-error">{dirError}</div>}
-          {entries.map(e => {
-            const entryPath = joinPath(currentDir, e.name)
-            const status = !e.isDirectory ? gitStatuses[entryPath] : undefined
+          {visibleItems.map(item => {
+            const status = !item.isDirectory ? gitStatuses[item.path] : undefined
+            const isSelected = item.path === activeFilePath
             return (
               <div
-                key={e.name}
-                className={`files-tab-entry ${e.isDirectory ? 'is-dir' : ''} ${openFile?.relativePath === entryPath ? 'active' : ''}`}
-                onClick={() => handleEntryClick(e)}
-                onContextMenu={(ev) => handleEntryContextMenu(ev, e)}
-                title={e.name}
+                key={item.path}
+                className={`files-tab-entry ${item.isDirectory ? 'is-dir' : ''} ${isSelected ? 'active' : ''}`}
+                style={{ paddingLeft: 6 + item.depth * 14 }}
+                onClick={() => handleItemClick(item)}
+                onContextMenu={(e) => handleEntryContextMenu(e, item)}
+                title={item.name}
               >
-                <span className="files-tab-entry-icon">{e.isDirectory ? '📁' : '📄'}</span>
-                <span className="files-tab-entry-name">{e.name}{e.isSymlink ? ' ↗' : ''}</span>
+                <span className="files-tab-entry-caret">
+                  {item.isDirectory ? (item.isExpanded ? '▼' : '▶') : ''}
+                </span>
+                <span className="files-tab-entry-icon">{item.isDirectory ? '📁' : '📄'}</span>
+                <span className="files-tab-entry-name">{item.name}{item.isSymlink ? ' ↗' : ''}</span>
                 {status && (
                   <span
                     className={`files-tab-entry-status status-${status}`}
@@ -408,60 +521,99 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
               </div>
             )
           })}
-          {!dirError && entries.length === 0 && (
-            <div className="files-tab-empty">(空目錄)</div>
+          {visibleItems.length === 0 && (
+            <div className="files-tab-empty">(載入中或空目錄)</div>
           )}
         </div>
       </div>
 
-      <div className="files-tab-viewer">
-        {!openFile && !fileError && (
-          <div className="files-tab-placeholder">點選左側檔案以開啟（Cmd+S 儲存）</div>
+      {/* === SPLITTER === */}
+      <div
+        className="files-tab-splitter"
+        onMouseDown={startDragSplitter}
+        title="拖移調整寬度"
+      />
+
+      {/* === RIGHT：files bar + viewer === */}
+      <div className="files-tab-right">
+        {/* 多檔 tab bar */}
+        {openFiles.length > 0 && (
+          <div className="files-tab-files-bar">
+            {openFiles.map(f => (
+              <div
+                key={f.path}
+                className={`files-tab-file-tab ${f.path === activeFilePath ? 'active' : ''}`}
+                onClick={() => setActiveFilePath(f.path)}
+                title={f.path}
+              >
+                <span className="files-tab-file-tab-name">
+                  {f.dirty && <span className="files-tab-dirty-mark">● </span>}
+                  {basename(f.path)}
+                </span>
+                <button
+                  className="files-tab-file-tab-close"
+                  onClick={(e) => { e.stopPropagation(); closeFile(f.path) }}
+                  title="關閉"
+                >×</button>
+              </div>
+            ))}
+          </div>
         )}
-        {fileError && <div className="files-tab-error">{fileError}</div>}
-        {openFile && (
-          <>
+
+        {/* Viewer：多個 editor container，CSS show/hide */}
+        <div className="files-tab-viewer">
+          {!activeFile && (
+            <div className="files-tab-placeholder">
+              點選左側檔案以開啟（Cmd+S 儲存 / 最多 {MAX_OPEN_FILES} 檔）
+            </div>
+          )}
+          {activeFile && (
             <div className="files-tab-viewer-header">
-              <span className="files-tab-viewer-path" title={openFile.relativePath}>
-                {openFile.relativePath}{openFile.dirty && <span className="files-tab-dirty-mark"> ●</span>}
-              </span>
-              <span className="files-tab-viewer-meta">{(openFile.size / 1024).toFixed(1)} KB</span>
+              <span className="files-tab-viewer-path" title={activeFile.path}>{activeFile.path}</span>
+              <span className="files-tab-viewer-meta">{(activeFile.size / 1024).toFixed(1)} KB</span>
               <button
                 className="files-tab-viewer-action"
-                onClick={handleSaveClick}
+                onClick={() => performSave()}
                 title="儲存 (Cmd+S)"
-                disabled={!openFile.dirty}
-              >
-                💾
-              </button>
+                disabled={!activeFile.dirty}
+              >💾</button>
               <button
                 className={`files-tab-viewer-action ${wrap ? 'active' : ''}`}
                 onClick={handleToggleWrap}
                 title={wrap ? '關閉自動換行' : '開啟自動換行'}
-              >
-                ↩
-              </button>
+              >↩</button>
               <button className="files-tab-viewer-action" onClick={handleReload} title="重新載入（捨棄變更）">↻</button>
               <button className="files-tab-viewer-action" onClick={handleOpenInIDE} title="以系統預設應用程式開啟">↗</button>
             </div>
-            {openFile.externallyChanged && (
-              <div className="files-tab-conflict-banner">
-                檔案已被外部修改。<button className="files-tab-conflict-reload" onClick={handleReload}>重新載入</button>
-              </div>
-            )}
-            {saveError && (
-              <div className="files-tab-conflict-banner">
-                儲存失敗：{saveError}
-              </div>
-            )}
-            <div ref={editorContainerRef} className="files-tab-editor-container" />
-          </>
-        )}
+          )}
+          {activeFile?.externallyChanged && (
+            <div className="files-tab-conflict-banner">
+              檔案已被外部修改。
+              <button className="files-tab-conflict-reload" onClick={handleReload}>重新載入</button>
+            </div>
+          )}
+          {saveError && (
+            <div className="files-tab-conflict-banner">儲存失敗：{saveError}</div>
+          )}
+          {/* 所有 open file 的 container 都 render，用 class 控制顯示 */}
+          <div className="files-tab-editor-area">
+            {openFiles.map(f => (
+              <div
+                key={f.path}
+                ref={(el) => {
+                  if (el) editorContainerRefs.current.set(f.path, el)
+                  else editorContainerRefs.current.delete(f.path)
+                }}
+                className={`files-tab-editor-container ${f.path === activeFilePath ? 'active' : ''}`}
+              />
+            ))}
+          </div>
+        </div>
       </div>
 
-      {conflict && openFile && (
+      {conflict && (
         <FileConflictDialog
-          filePath={openFile.relativePath}
+          filePath={conflict.path}
           onOverwrite={handleConflictOverwrite}
           onReload={handleConflictReload}
           onCancel={handleConflictCancel}

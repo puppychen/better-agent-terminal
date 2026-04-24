@@ -30,11 +30,11 @@ interface MainPanelProps {
   workspaceCwd: string | null
   onRequestCloseTab?: (id: string) => void
   onCycleAgent?: (direction: 1 | -1) => void
-  /** 父層處理：永遠開 launch dialog 讓用戶選 resume 或新建 */
   onAddAgent?: (workspaceId: string, cwd: string) => void
+  onAddCodexAgent?: (workspaceId: string, cwd: string) => void
 }
 
-export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, onCycleAgent, onAddAgent }: MainPanelProps) {
+export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, onCycleAgent, onAddAgent, onAddCodexAgent }: MainPanelProps) {
   const [termState, setTermState] = useState<TerminalState>(terminalStore.getState())
   const [gitInfo, setGitInfo] = useState<GitInfo | null>(null)
   const [subRepos, setSubRepos] = useState<SubRepoInfo[]>([])
@@ -92,6 +92,11 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
     onAddAgent(activeWorkspaceId, workspaceCwd)
   }, [activeWorkspaceId, workspaceCwd, onAddAgent])
 
+  const handleNewCodex = useCallback(() => {
+    if (!activeWorkspaceId || !workspaceCwd || !onAddCodexAgent) return
+    onAddCodexAgent(activeWorkspaceId, workspaceCwd)
+  }, [activeWorkspaceId, workspaceCwd, onAddCodexAgent])
+
   const handleNewFiles = useCallback(async () => {
     if (!activeWorkspaceId || !workspaceCwd) return
     // 單例：若已存在 Files tab，切過去而非新建
@@ -139,7 +144,7 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
 
   /** 拆 label：如 "[C] 規劃-A" → ["[C] ", "規劃-A"]；無 prefix 則為 ["", label] */
   const splitPrefix = (label: string): [string, string] => {
-    const m = label.match(/^(\[[CFT]\]\s)/)
+    const m = label.match(/^(\[[CFTX]\]\s)/)
     return m ? [m[1], label.slice(m[1].length)] : ['', label]
   }
 
@@ -269,6 +274,15 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
             title="New Claude session"
           >
             + C
+          </button>
+        )}
+        {onAddCodexAgent && (
+          <button
+            className="terminal-tab-new terminal-tab-new-codex"
+            onClick={handleNewCodex}
+            title="New Codex session"
+          >
+            + X
           </button>
         )}
         <button
