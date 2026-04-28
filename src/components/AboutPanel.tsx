@@ -22,6 +22,19 @@ interface HookStatus {
   hasStop: boolean
   hasNotification: boolean
   scriptExists: boolean
+  claude: {
+    installed: boolean
+    hasStop: boolean
+    hasNotification: boolean
+    scriptExists: boolean
+  }
+  codex: {
+    installed: boolean
+    hasStop: boolean
+    configEnabled: boolean
+    hooksFileExists: boolean
+    scriptExists: boolean
+  }
 }
 
 interface AboutPanelProps {
@@ -93,11 +106,12 @@ export function AboutPanel({ onClose }: AboutPanelProps) {
     try {
       const result = await window.electronAPI.notify.installHook()
       if (result.success) {
+        const backupCount = result.backupPaths?.length ?? (result.backedUp ? 1 : 0)
         setInstallResult({
           ok: true,
-          msg: result.backedUp
-            ? `已安裝 hook script 並合併 settings.json（原檔備份於 ${result.backupPath?.split('/').pop()}）`
-            : '已安裝 hook script 並建立 settings.json'
+          msg: backupCount > 0
+            ? `已安裝 Claude/Codex hooks（已備份 ${backupCount} 個既有設定檔）`
+            : '已安裝 Claude/Codex hooks 並建立必要設定檔'
         })
       } else {
         setInstallResult({ ok: false, msg: result.error || '安裝失敗' })
@@ -205,7 +219,7 @@ export function AboutPanel({ onClose }: AboutPanelProps) {
                 <button
                   className="notify-help-btn"
                   onClick={() => setShowNotifyHelp(true)}
-                  title="How to set up Claude Code hooks"
+                  title="How to set up Claude Code and Codex hooks"
                 >?</button>
               </h3>
               <div className="settings-group ws-toggle-row">
@@ -226,9 +240,19 @@ export function AboutPanel({ onClose }: AboutPanelProps) {
                     <span className="ws-status-value">127.0.0.1:{notifyStatus.port}</span>
                   </div>
                   <div className="ws-status-row">
-                    <span className="ws-status-label">Hook</span>
+                    <span className="ws-status-label">Claude Hook</span>
                     <span className="ws-status-value">
-                      {hookStatus?.installed ? (
+                      {hookStatus?.claude.installed ? (
+                        <span className="notify-status-installed">\u2713 Installed</span>
+                      ) : (
+                        <span className="notify-status-missing">\u2717 Not installed</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="ws-status-row">
+                    <span className="ws-status-label">Codex Hook</span>
+                    <span className="ws-status-value">
+                      {hookStatus?.codex.installed ? (
                         <span className="notify-status-installed">\u2713 Installed</span>
                       ) : (
                         <span className="notify-status-missing">\u2717 Not installed</span>
@@ -239,7 +263,7 @@ export function AboutPanel({ onClose }: AboutPanelProps) {
               )}
 
               {!notifyStatus.running && (
-                <p className="ws-hint">Enable to receive red-dot alerts and macOS notifications when agents stop or wait for input. Click <strong>?</strong> to set up Claude Code hooks.</p>
+                <p className="ws-hint">Enable to receive red-dot alerts and macOS notifications when agents stop or wait for input. Click <strong>?</strong> to set up Claude Code and Codex hooks.</p>
               )}
 
               {installResult && (
@@ -258,7 +282,7 @@ export function AboutPanel({ onClose }: AboutPanelProps) {
             </div>
 
             <p className="about-description">
-              A terminal aggregator with multi-workspace support and Claude Code integration.
+              A terminal aggregator with multi-workspace support and Claude Code/Codex integration.
             </p>
 
             <div className="about-info">
@@ -288,9 +312,11 @@ export function AboutPanel({ onClose }: AboutPanelProps) {
             <ul style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, paddingLeft: 20 }}>
               <li>建立 <code>~/.claude/hooks/better-agent-notify.sh</code></li>
               <li>備份並修改 <code>~/.claude/settings.json</code>（合併 hooks 設定）</li>
+              <li>備份並修改 <code>~/.codex/config.toml</code>（啟用 <code>codex_hooks</code>）</li>
+              <li>備份並修改 <code>~/.codex/hooks.json</code>（合併 <code>Stop</code> hook）</li>
             </ul>
             <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 12 }}>
-              原 settings.json 會備份為 <code>settings.json.backup-{'<timestamp>'}</code>，可隨時還原。
+              既有設定檔會備份為 <code>{'原檔名'}.backup-{'<timestamp>'}</code>，可隨時還原。
               若已存在 better-agent-notify hook 設定，會自動跳過避免重複。
             </p>
             <div className="notify-help-actions" style={{ marginTop: 16 }}>

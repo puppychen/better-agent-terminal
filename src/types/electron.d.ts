@@ -50,6 +50,50 @@ export type GitFileStatusResult =
   | { ok: true; statuses: Record<string, GitFileStatus> }
   | { ok: false; error: 'NOT_GIT_REPO' | 'GIT_NOT_FOUND' | 'TIMEOUT' | 'TOO_LARGE' | 'IO_ERROR'; message?: string }
 
+export interface ClaudeNotifyHookStatus {
+  installed: boolean
+  hasStop: boolean
+  hasNotification: boolean
+  scriptExists: boolean
+}
+
+export interface CodexNotifyHookStatus {
+  installed: boolean
+  hasStop: boolean
+  configEnabled: boolean
+  hooksFileExists: boolean
+  scriptExists: boolean
+}
+
+export interface NotifyHookStatus {
+  installed: boolean
+  hasStop: boolean
+  hasNotification: boolean
+  scriptExists: boolean
+  claude: ClaudeNotifyHookStatus
+  codex: CodexNotifyHookStatus
+}
+
+export interface NotifyInstallResult {
+  success: boolean
+  scriptPath?: string
+  settingsPath?: string
+  codexConfigPath?: string
+  codexHooksPath?: string
+  backupPath?: string | null
+  backupPaths?: string[]
+  backedUp?: boolean
+  error?: string
+}
+
+export interface NotifyClientEvent {
+  cwd: string
+  event: 'stop' | 'wait'
+  sessionId?: string
+  agentType?: CodeAgentType
+  meta?: { tool?: string; description?: string }
+}
+
 interface SubRepoInfo {
   name: string
   path: string
@@ -115,22 +159,10 @@ interface ElectronAPI {
       tokenPath: string
     }>
     toggle: (enabled: boolean) => Promise<void>
-    checkHookInstalled: () => Promise<{
-      installed: boolean
-      hasStop: boolean
-      hasNotification: boolean
-      scriptExists: boolean
-    }>
-    installHook: () => Promise<{
-      success: boolean
-      scriptPath?: string
-      settingsPath?: string
-      backupPath?: string | null
-      backedUp?: boolean
-      error?: string
-    }>
-    onEvent: (callback: (event: { cwd: string; event: 'stop' | 'wait'; sessionId?: string; meta?: { tool?: string; description?: string } }) => void) => () => void
-    onFocusTerminal: (callback: (event: { cwd: string; sessionId?: string }) => void) => () => void
+    checkHookInstalled: () => Promise<NotifyHookStatus>
+    installHook: () => Promise<NotifyInstallResult>
+    onEvent: (callback: (event: NotifyClientEvent) => void) => () => void
+    onFocusTerminal: (callback: (event: { cwd: string; sessionId?: string; agentType?: CodeAgentType }) => void) => () => void
   }
   claudeSessions: {
     list: (cwd: string) => Promise<ClaudeSessionListResult>

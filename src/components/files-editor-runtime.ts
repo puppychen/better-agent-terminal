@@ -18,6 +18,10 @@ export interface EditorRuntime {
   oneDark: typeof import('@codemirror/theme-one-dark').oneDark
   searchKeymap: typeof import('@codemirror/search').searchKeymap
   search: typeof import('@codemirror/search').search
+  SearchQuery: typeof import('@codemirror/search').SearchQuery
+  setSearchQuery: typeof import('@codemirror/search').setSearchQuery
+  findNext: typeof import('@codemirror/search').findNext
+  findPrevious: typeof import('@codemirror/search').findPrevious
 }
 
 let runtimePromise: Promise<EditorRuntime> | null = null
@@ -42,7 +46,11 @@ export function loadEditorRuntime(): Promise<EditorRuntime> {
     historyKeymap: commands.historyKeymap,
     oneDark: oneDark.oneDark,
     searchKeymap: searchMod.searchKeymap,
-    search: searchMod.search
+    search: searchMod.search,
+    SearchQuery: searchMod.SearchQuery,
+    setSearchQuery: searchMod.setSearchQuery,
+    findNext: searchMod.findNext,
+    findPrevious: searchMod.findPrevious
   }))
   return runtimePromise
 }

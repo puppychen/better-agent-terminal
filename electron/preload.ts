@@ -66,12 +66,12 @@ const electronAPI = {
     toggle: (enabled: boolean) => ipcRenderer.invoke('notify:toggle', enabled),
     checkHookInstalled: () => ipcRenderer.invoke('notify:check-hook-installed'),
     installHook: () => ipcRenderer.invoke('notify:install-hook'),
-    onEvent: (callback: (event: { cwd: string; event: 'stop' | 'wait'; sessionId?: string; meta?: { tool?: string; description?: string } }) => void) => {
+    onEvent: (callback: (event: { cwd: string; event: 'stop' | 'wait'; sessionId?: string; agentType?: CodeAgentType; meta?: { tool?: string; description?: string } }) => void) => {
       const handler = (_e: any, event: any) => callback(event)
       ipcRenderer.on('notify:event', handler)
       return () => { ipcRenderer.removeListener('notify:event', handler) }
     },
-    onFocusTerminal: (callback: (event: { cwd: string; sessionId?: string }) => void) => {
+    onFocusTerminal: (callback: (event: { cwd: string; sessionId?: string; agentType?: CodeAgentType }) => void) => {
       const handler = (_e: any, event: any) => callback(event)
       ipcRenderer.on('notify:focus-terminal', handler)
       return () => { ipcRenderer.removeListener('notify:focus-terminal', handler) }

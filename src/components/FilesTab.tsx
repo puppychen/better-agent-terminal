@@ -102,6 +102,9 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
   const [conflict, setConflict] = useState<ConflictState | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [entryMenu, setEntryMenu] = useState<{ path: string; x: number; y: number; isDirectory: boolean } | null>(null)
+  const [searchUI, setSearchUI] = useState<{ filePath: string; query: string } | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const openSearchUIRef = useRef<() => void>(() => {})
 
   const { showToast } = useToast()
 
@@ -221,6 +224,18 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
         EditorState, Compartment, EditorView, lineNumbers, highlightActiveLine,
         keymap, defaultKeymap, history, historyKeymap, oneDark, searchKeymap, search
       } = runtime
+      // 內建 search panel 用 noop 隱藏，UI 改由 React 浮動框；search() 仍負責 highlight
+      const noopPanel = () => {
+        const dom = document.createElement('div')
+        dom.style.height = '0'
+        dom.style.overflow = 'hidden'
+        return { dom }
+      }
+      const customSearchBinding = keymap.of([{
+        key: 'Mod-f',
+        preventDefault: true,
+        run: () => { openSearchUIRef.current(); return true }
+      }])
 
       // 新增 view
       for (const f of openFiles) {
@@ -250,11 +265,12 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
             lineNumbers(),
             highlightActiveLine(),
             history(),
-            search(),
+            search({ createPanel: noopPanel }),
             oneDark,
             wrapCompartment.of(wrap ? EditorView.lineWrapping : []),
             saveBinding,
-            keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+            customSearchBinding,
+            keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap.filter(b => b.key !== 'Mod-f')]),
             updateListener,
             EditorView.theme({
               '&': { height: '100%', fontSize: '13px' },
@@ -300,6 +316,75 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
       editorContainerRefs.current.clear()
     }
   }, [])
+
+  // === 自訂搜尋（浮動框） ===
+  const applySearch = useCallback((filePath: string, query: string) => {
+    const runtime = editorRuntimeRef.current
+    const entry = editorViewsRef.current.get(filePath)
+    if (!runtime || !entry) return
+    const sq = new runtime.SearchQuery({ search: query, caseSensitive: false })
+    entry.view.dispatch({ effects: runtime.setSearchQuery.of(sq) })
+    if (query) runtime.findNext(entry.view)
+  }, [])
+
+  // 設定 ref 讓 CodeMirror keymap closure 能呼叫 React state
+  useEffect(() => {
+    openSearchUIRef.current = () => {
+      const path = activeFilePathRef.current
+      if (!path) return
+      const entry = editorViewsRef.current.get(path)
+      let initialQuery = ''
+      if (entry) {
+        const view = entry.view
+        const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to)
+        if (sel && !sel.includes('\n') && sel.length < 200) initialQuery = sel
+      }
+      setSearchUI({ filePath: path, query: initialQuery })
+      if (initialQuery) applySearch(path, initialQuery)
+    }
+  }, [applySearch])
+
+  // 切檔 → 關閉浮動框
+  useEffect(() => {
+    if (searchUI && searchUI.filePath !== activeFilePath) {
+      setSearchUI(null)
+    }
+  }, [activeFilePath, searchUI])
+
+  // 開啟時 focus input
+  useEffect(() => {
+    if (searchUI && searchInputRef.current) {
+      searchInputRef.current.focus()
+      searchInputRef.current.select()
+    }
+  }, [searchUI?.filePath])
+
+  // Esc 關閉浮動框
+  useEffect(() => {
+    if (!searchUI) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setSearchUI(null)
+      }
+    }
+    document.addEventListener('keydown', handler, true)
+    return () => document.removeEventListener('keydown', handler, true)
+  }, [searchUI])
+
+  const handleSearchPrev = () => {
+    if (!searchUI) return
+    const runtime = editorRuntimeRef.current
+    const entry = editorViewsRef.current.get(searchUI.filePath)
+    if (runtime && entry) runtime.findPrevious(entry.view)
+  }
+
+  const handleSearchNext = () => {
+    if (!searchUI) return
+    const runtime = editorRuntimeRef.current
+    const entry = editorViewsRef.current.get(searchUI.filePath)
+    if (runtime && entry) runtime.findNext(entry.view)
+  }
 
   // === on-focus mtime check（只對 active file） ===
   useEffect(() => {
@@ -607,6 +692,46 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
                 className={`files-tab-editor-container ${f.path === activeFilePath ? 'active' : ''}`}
               />
             ))}
+            {searchUI && activeFile && (
+              <div className="files-tab-search-box" onClick={(e) => e.stopPropagation()}>
+                <input
+                  ref={searchInputRef}
+                  className="files-tab-search-input"
+                  value={searchUI.query}
+                  onChange={(e) => {
+                    const q = e.target.value
+                    setSearchUI(prev => prev ? { ...prev, query: q } : prev)
+                    applySearch(searchUI.filePath, q)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      if (e.shiftKey) handleSearchPrev()
+                      else handleSearchNext()
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault()
+                      setSearchUI(null)
+                    }
+                  }}
+                  placeholder="搜尋..."
+                />
+                <button
+                  className="files-tab-search-btn"
+                  onClick={handleSearchPrev}
+                  title="上一個 (Shift+Enter)"
+                >↑</button>
+                <button
+                  className="files-tab-search-btn"
+                  onClick={handleSearchNext}
+                  title="下一個 (Enter)"
+                >↓</button>
+                <button
+                  className="files-tab-search-btn"
+                  onClick={() => setSearchUI(null)}
+                  title="關閉 (Esc)"
+                >×</button>
+              </div>
+            )}
           </div>
         </div>
       </div>

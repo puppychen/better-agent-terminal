@@ -7,7 +7,7 @@ import { AboutPanel } from './components/AboutPanel'
 import { ToastProvider, useToast } from './components/Toast'
 import { DuplicateWorkspaceDialog } from './components/DuplicateWorkspaceDialog'
 import { ConfirmDialog } from './components/ConfirmDialog'
-import type { AppState, Workspace } from './types'
+import type { AppState, CodeAgentType, Workspace } from './types'
 
 function AppContent() {
   const [state, setState] = useState<AppState>(workspaceStore.getState())
@@ -18,6 +18,8 @@ function AppContent() {
     isAgent: boolean
   } | null>(null)
   const [showQuitConfirm, setShowQuitConfirm] = useState(false)
+  /** 通知點擊產生的「強制聚焦」訊號 — 每次遞增，Sidebar 收到時強制把 group 同步到 active workspace */
+  const [focusNonce, setFocusNonce] = useState(0)
   const [duplicateInfo, setDuplicateInfo] = useState<{
     folderPath: string
     existingWorkspace: Workspace
@@ -108,33 +110,62 @@ function AppContent() {
       setShowQuitConfirm(true)
     })
 
-    // 路由優先順序：sessionId → cwd（兼容舊版 hook）
-    // 多 agent 同 cwd 時，sessionId 才能精準對應到正確的 terminal
-    const findAgentTarget = (cwd: string, sessionId?: string) => {
+    // 路由優先順序：sessionId → cwd + agentType（兼容舊版 hook）
+    // 多 agent 同 cwd 時，Claude sessionId 或 agentType 才能精準對應到正確 terminal。
+    // cwd 比對需正規化：去尾斜線 + 展開 macOS /private/{var,tmp} 符號連結
+    const normalizeCwd = (p?: string) => {
+      if (!p) return ''
+      let s = p.replace(/\/+$/, '')
+      s = s.replace(/^\/private\/var\//, '/var/')
+      s = s.replace(/^\/private\/tmp\//, '/tmp/')
+      return s
+    }
+    const findAgentTarget = (cwd: string, sessionId?: string, agentType?: CodeAgentType) => {
       const terminals = terminalStore.getState().terminals
-      if (sessionId) {
-        const bySession = terminals.find(t => t.claudeSessionId === sessionId && t.type === 'agent')
+      const isMatchingAgent = (terminalAgentType?: CodeAgentType) =>
+        !agentType || (terminalAgentType || 'claude') === agentType
+      const targetCwd = normalizeCwd(cwd)
+
+      if (sessionId && (!agentType || agentType === 'claude')) {
+        const bySession = terminals.find(t =>
+          t.claudeSessionId === sessionId &&
+          t.type === 'agent' &&
+          isMatchingAgent(t.agentType)
+        )
         if (bySession) return bySession
       }
       const activeWorkspaceId = workspaceStore.getState().activeWorkspaceId
       return terminals.find(t =>
-        t.cwd === cwd && t.type === 'agent' && t.workspaceId === activeWorkspaceId
-      ) || terminals.find(t => t.cwd === cwd && t.type === 'agent')
+        normalizeCwd(t.cwd) === targetCwd &&
+        t.type === 'agent' &&
+        t.workspaceId === activeWorkspaceId &&
+        isMatchingAgent(t.agentType)
+      ) || terminals.find(t =>
+        normalizeCwd(t.cwd) === targetCwd &&
+        t.type === 'agent' &&
+        isMatchingAgent(t.agentType)
+      )
     }
 
     // 點 macOS 通知 → 切換到對應 workspace + terminal
-    const unsubFocusTerminal = window.electronAPI.notify?.onFocusTerminal?.(({ cwd, sessionId }) => {
-      const target = findAgentTarget(cwd, sessionId)
-      if (!target) return
+    const unsubFocusTerminal = window.electronAPI.notify?.onFocusTerminal?.(({ cwd, sessionId, agentType }) => {
+      const target = findAgentTarget(cwd, sessionId, agentType)
+      console.log('[notify-debug] focus-terminal', { cwd, sessionId, agentType, found: !!target, targetWs: target?.workspaceId, targetType: target?.agentType })
+      if (!target) {
+        console.warn('[notify-debug] no target found, dump agents:', terminalStore.getState().terminals.filter(t => t.type === 'agent').map(t => ({ id: t.id, cwd: t.cwd, agentType: t.agentType, workspaceId: t.workspaceId })))
+        return
+      }
       if (target.workspaceId !== workspaceStore.getState().activeWorkspaceId) {
         workspaceStore.setActiveWorkspace(target.workspaceId)
       }
       terminalStore.setActiveTerminal(target.id)
+      // 強制觸發 Sidebar 同步 group（即使 workspace 沒變也要切回對應 group tab）
+      setFocusNonce(n => n + 1)
     })
 
     // Notify event → mark terminal as unread
     const unsubNotify = window.electronAPI.notify?.onEvent?.((event) => {
-      const target = findAgentTarget(event.cwd, event.sessionId)
+      const target = findAgentTarget(event.cwd, event.sessionId, event.agentType)
       if (!target) return
       const { activeTerminalId } = terminalStore.getState()
       if (target.id === activeTerminalId && document.hasFocus()) return
@@ -189,7 +220,7 @@ function AppContent() {
 
   const handleCreateEmbeddedTerminal = useCallback(async (
     workspaceId: string, cwd: string,
-    options?: { type?: 'shell' | 'agent'; agentType?: 'claude'; initialCommand?: string; claudeSessionId?: string; label?: string }
+    options?: { type?: 'shell' | 'agent'; agentType?: 'claude' | 'codex'; initialCommand?: string; claudeSessionId?: string; label?: string }
   ) => {
     await terminalStore.createTerminal(workspaceId, cwd, options)
   }, [])
@@ -297,7 +328,7 @@ function AppContent() {
     terminalStore.createTerminal(workspaceId, cwd, {
       type: 'agent',
       agentType: 'claude',
-      initialCommand: `claude -c --model 'claude-opus-4-6[1M]' --permission-mode bypassPermissions`,
+      initialCommand: `claude -c --permission-mode bypassPermissions`,
       labelLockedByUser: true  // 鎖定 default label，避免 onChange 誤套用其他 entry summary
     })
   }, [])
@@ -307,7 +338,7 @@ function AppContent() {
     terminalStore.createTerminal(workspaceId, cwd, {
       type: 'agent',
       agentType: 'claude',
-      initialCommand: `claude --session-id ${sessionId} --model 'claude-opus-4-6[1M]' --permission-mode bypassPermissions`,
+      initialCommand: `claude --session-id ${sessionId} --permission-mode bypassPermissions`,
       claudeSessionId: sessionId
     })
   }, [])
@@ -357,6 +388,7 @@ function AppContent() {
         onOpenAbout={() => setShowAbout(true)}
         onCreateEmbeddedTerminal={handleCreateEmbeddedTerminal}
         onLaunchAgent={handleLaunchAgent}
+        focusNonce={focusNonce}
       />
       <div
         className="resize-handle"

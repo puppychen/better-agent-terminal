@@ -430,17 +430,32 @@ body {
 }
 
 /* Agent Status Indicator */
+.agent-indicator-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
 .agent-indicator {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  margin-right: 6px;
 }
 
 .agent-indicator.active {
   background-color: #22c55e;
   cursor: pointer;
+}
+
+.agent-indicator.active.agent-indicator-claude {
+  background-color: #f59e0b;
+}
+
+.agent-indicator.active.agent-indicator-codex {
+  background-color: #22c55e;
 }
 
 
@@ -957,6 +972,14 @@ body {
   border-radius: 50%;
   background-color: #22c55e;
   flex-shrink: 0;
+}
+
+.agent-overview-dot.agent-overview-dot-claude {
+  background-color: #f59e0b;
+}
+
+.agent-overview-dot.agent-overview-dot-codex {
+  background-color: #22c55e;
 }
 
 .agent-overview-name {
@@ -1687,6 +1710,60 @@ body {
   flex: 1;
   position: relative;
   overflow: hidden;
+}
+
+/* === 浮動搜尋框（VSCode 風格，右上角） === */
+.files-tab-search-box {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 5px 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.files-tab-search-input {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 5px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  width: 220px;
+  height: 28px;
+  outline: none;
+}
+
+.files-tab-search-input:focus {
+  border-color: var(--accent-color);
+}
+
+.files-tab-search-btn {
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.files-tab-search-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .files-tab-tree-header {

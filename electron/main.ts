@@ -1042,32 +1042,46 @@ ipcMain.handle('ws:toggle', async (_event, enabled: unknown) => {
 
 // === Notification Server ===
 
+// 保持 Notification 物件活著，避免 GC 後 click handler 失效（macOS 容易發生）
+const activeNotifications = new Set<Notification>()
+
 function startNotifyServer(): void {
   if (notifyServer) return
   notifyServer = new NotifyServer(notifyConfig, (event: NotifyEvent) => {
     if (!mainWindow || mainWindow.isDestroyed()) return
     // 1. 通知 renderer 更新 unread state
     mainWindow.webContents.send('notify:event', event)
-    // 2. 不在前景才發 macOS 通知
-    if (!mainWindow.isFocused() && Notification.isSupported()) {
+    // 2. 一律發 macOS 通知（不論視窗是否 focus）
+    if (Notification.isSupported()) {
       const projectName = path.basename(event.cwd)
+      const agentTag = event.agentType === 'codex' ? '[X]' : '[C]'
       const title = event.event === 'stop'
-        ? `Agent finished: ${projectName}`
-        : `Agent waiting: ${projectName}`
+        ? `${agentTag} finished: ${projectName}`
+        : `${agentTag} waiting: ${projectName}`
       const body = event.event === 'stop'
         ? 'Process completed'
         : (event.meta?.description || 'Waiting for input')
       try {
         const notification = new Notification({ title, body, silent: false })
+        activeNotifications.add(notification)
+        const cleanup = () => { activeNotifications.delete(notification) }
         // 點通知 → 聚焦視窗 + 切換到該 workspace/terminal
         notification.on('click', () => {
+          console.log('[notify-debug] click', { agentType: event.agentType, cwd: event.cwd })
           if (mainWindow && !mainWindow.isDestroyed()) {
             if (mainWindow.isMinimized()) mainWindow.restore()
             mainWindow.show()
             mainWindow.focus()
-            mainWindow.webContents.send('notify:focus-terminal', { cwd: event.cwd, sessionId: event.sessionId })
+            mainWindow.webContents.send('notify:focus-terminal', {
+              cwd: event.cwd,
+              sessionId: event.sessionId,
+              agentType: event.agentType
+            })
           }
+          cleanup()
         })
+        notification.on('close', cleanup)
+        notification.on('failed', cleanup)
         notification.show()
       } catch (e) {
         console.error('[notify] Failed to show notification:', e)
@@ -1107,48 +1121,200 @@ ipcMain.handle('notify:toggle', async (_event, enabled: unknown) => {
   }, null, 2))
 })
 
-// 偵測 hook 是否已安裝（讀 ~/.claude/settings.json）
+interface ClaudeNotifyHookStatus {
+  installed: boolean
+  hasStop: boolean
+  hasNotification: boolean
+  scriptExists: boolean
+}
+
+interface CodexNotifyHookStatus {
+  installed: boolean
+  hasStop: boolean
+  configEnabled: boolean
+  hooksFileExists: boolean
+  scriptExists: boolean
+}
+
+const notifyHookCommand = '~/.claude/hooks/better-agent-notify.sh'
+
+type JsonObject = Record<string, unknown>
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasNotifyCommand(hookList: unknown): boolean {
+  if (!Array.isArray(hookList)) return false
+  return hookList.some((entry) =>
+    isJsonObject(entry) && Array.isArray(entry.hooks) && entry.hooks.some((cmd) =>
+      isJsonObject(cmd) && typeof cmd.command === 'string' && cmd.command.includes('better-agent-notify')
+    )
+  )
+}
+
+/** 移除所有 better-agent-notify 的 entry（reinstall 時清舊版用） */
+function stripNotifyEntries(hookList: unknown[]): void {
+  for (let i = hookList.length - 1; i >= 0; i--) {
+    const entry = hookList[i]
+    if (!isJsonObject(entry) || !Array.isArray(entry.hooks)) continue
+    const filtered = entry.hooks.filter((cmd) =>
+      !(isJsonObject(cmd) && typeof cmd.command === 'string' && cmd.command.includes('better-agent-notify'))
+    )
+    if (filtered.length === 0) {
+      hookList.splice(i, 1)
+    } else {
+      entry.hooks = filtered
+    }
+  }
+}
+
+function parseJsonObject(filePath: string): JsonObject {
+  const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+  return isJsonObject(parsed) ? parsed : {}
+}
+
+function ensureHooksObject(target: JsonObject): JsonObject {
+  if (isJsonObject(target.hooks)) return target.hooks
+  const hooks: JsonObject = {}
+  target.hooks = hooks
+  return hooks
+}
+
+function isCodexHooksFeatureEnabled(content: string): boolean {
+  let inFeatures = false
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#')) continue
+    const section = line.match(/^\[([^\]]+)\]$/)
+    if (section) {
+      inFeatures = section[1].trim() === 'features'
+      continue
+    }
+    if (inFeatures) {
+      const match = line.match(/^codex_hooks\s*=\s*(true|false)\b/i)
+      if (match) return match[1].toLowerCase() === 'true'
+    }
+  }
+  return false
+}
+
+function enableCodexHooksFeature(content: string): string {
+  const trimmed = content.replace(/\s*$/, '')
+  if (!trimmed) {
+    return '[features]\ncodex_hooks = true\n'
+  }
+
+  const lines = trimmed.split(/\r?\n/)
+  const featureIndex = lines.findIndex(line => line.trim() === '[features]')
+  if (featureIndex === -1) {
+    return `${trimmed}\n\n[features]\ncodex_hooks = true\n`
+  }
+
+  let sectionEnd = lines.length
+  for (let i = featureIndex + 1; i < lines.length; i += 1) {
+    if (/^\[[^\]]+\]\s*$/.test(lines[i].trim())) {
+      sectionEnd = i
+      break
+    }
+  }
+
+  for (let i = featureIndex + 1; i < sectionEnd; i += 1) {
+    if (/^\s*codex_hooks\s*=/.test(lines[i])) {
+      lines[i] = 'codex_hooks = true'
+      return `${lines.join('\n')}\n`
+    }
+  }
+
+  lines.splice(featureIndex + 1, 0, 'codex_hooks = true')
+  return `${lines.join('\n')}\n`
+}
+
+function getClaudeHookStatus(homedir: string, scriptPath: string): ClaudeNotifyHookStatus {
+  const settingsPath = path.join(homedir, '.claude', 'settings.json')
+  const scriptExists = fs.existsSync(scriptPath)
+  if (!fs.existsSync(settingsPath)) {
+    return { installed: false, hasStop: false, hasNotification: false, scriptExists }
+  }
+
+  const settings = parseJsonObject(settingsPath)
+  const hooks = isJsonObject(settings.hooks) ? settings.hooks : {}
+  const hasStop = hasNotifyCommand(hooks.Stop)
+  const hasNotification = hasNotifyCommand(hooks.Notification)
+  return {
+    installed: hasStop && hasNotification && scriptExists,
+    hasStop,
+    hasNotification,
+    scriptExists
+  }
+}
+
+function getCodexHookStatus(homedir: string, scriptPath: string): CodexNotifyHookStatus {
+  const codexConfigPath = path.join(homedir, '.codex', 'config.toml')
+  const codexHooksPath = path.join(homedir, '.codex', 'hooks.json')
+  const scriptExists = fs.existsSync(scriptPath)
+  const hooksFileExists = fs.existsSync(codexHooksPath)
+  const configEnabled = fs.existsSync(codexConfigPath)
+    ? isCodexHooksFeatureEnabled(fs.readFileSync(codexConfigPath, 'utf-8'))
+    : false
+
+  let hasStop = false
+  if (hooksFileExists) {
+    const hooksConfig = parseJsonObject(codexHooksPath)
+    const hooks = isJsonObject(hooksConfig.hooks) ? hooksConfig.hooks : {}
+    hasStop = hasNotifyCommand(hooks.Stop)
+  }
+
+  return {
+    installed: hasStop && configEnabled && scriptExists,
+    hasStop,
+    configEnabled,
+    hooksFileExists,
+    scriptExists
+  }
+}
+
+// 偵測 Claude Code 與 Codex hook 是否已安裝
 ipcMain.handle('notify:check-hook-installed', async () => {
   try {
-    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
-    if (!fs.existsSync(settingsPath)) {
-      return { installed: false, hasStop: false, hasNotification: false, scriptExists: false }
-    }
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
-    const hooks = settings.hooks || {}
-    const checkHook = (hookList: unknown): boolean => {
-      if (!Array.isArray(hookList)) return false
-      return hookList.some((h: any) =>
-        h && Array.isArray(h.hooks) && h.hooks.some((cmd: any) =>
-          cmd && typeof cmd.command === 'string' && cmd.command.includes('better-agent-notify')
-        )
-      )
-    }
-    const hasStop = checkHook(hooks.Stop)
-    const hasNotification = checkHook(hooks.Notification)
-    const scriptPath = path.join(os.homedir(), '.claude', 'hooks', 'better-agent-notify.sh')
-    const scriptExists = fs.existsSync(scriptPath)
+    const homedir = os.homedir()
+    const scriptPath = path.join(homedir, '.claude', 'hooks', 'better-agent-notify.sh')
+    const claude = getClaudeHookStatus(homedir, scriptPath)
+    const codex = getCodexHookStatus(homedir, scriptPath)
     return {
-      installed: hasStop && hasNotification && scriptExists,
-      hasStop,
-      hasNotification,
-      scriptExists
+      installed: claude.installed && codex.installed,
+      hasStop: claude.hasStop,
+      hasNotification: claude.hasNotification,
+      scriptExists: claude.scriptExists && codex.scriptExists,
+      claude,
+      codex
     }
   } catch {
-    return { installed: false, hasStop: false, hasNotification: false, scriptExists: false }
+    return {
+      installed: false,
+      hasStop: false,
+      hasNotification: false,
+      scriptExists: false,
+      claude: { installed: false, hasStop: false, hasNotification: false, scriptExists: false },
+      codex: { installed: false, hasStop: false, configEnabled: false, hooksFileExists: false, scriptExists: false }
+    }
   }
 })
 
-// 自動安裝 hook script + merge ~/.claude/settings.json
+// 自動安裝 hook script + merge Claude/Codex hook 設定
 ipcMain.handle('notify:install-hook', async () => {
   try {
     const homedir = os.homedir()
     const hooksDir = path.join(homedir, '.claude', 'hooks')
     const scriptPath = path.join(hooksDir, 'better-agent-notify.sh')
     const settingsPath = path.join(homedir, '.claude', 'settings.json')
+    const codexDir = path.join(homedir, '.codex')
+    const codexConfigPath = path.join(codexDir, 'config.toml')
+    const codexHooksPath = path.join(codexDir, 'hooks.json')
+    const backupPaths: string[] = []
 
     // 1. 建立 hook script
-    // Claude hook 透過 stdin 餵 JSON（含 session_id / cwd 等），用 sed 擷取 session_id 以精準路由到對應 terminal
+    // Claude/Codex hook 透過 stdin 餵 JSON，用 sed 擷取 session_id/cwd 以路由到對應 terminal。
     const scriptContent = `#!/bin/bash
 TOKEN_FILE="$HOME/.claude/better-agent/notify-auth.txt"
 [ -f "$TOKEN_FILE" ] || exit 0
@@ -1159,13 +1325,40 @@ TOKEN="\${TOKEN_INFO##*:}"
 
 INPUT=$(cat 2>/dev/null || echo "")
 SESSION_ID=$(printf '%s' "$INPUT" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -1)
-CWD="\${CLAUDE_PROJECT_DIR:-$(pwd)}"
+INPUT_CWD=$(printf '%s' "$INPUT" | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -1)
+HOOK_EVENT=$(printf '%s' "$INPUT" | sed -n 's/.*"hook_event_name"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -1)
+CWD="\${CLAUDE_PROJECT_DIR:-\${INPUT_CWD:-$(pwd)}}"
 EVENT="\${1:-stop}"
+AGENT_TYPE="\${2:-}"
+
+if [ "$HOOK_EVENT" = "Stop" ]; then
+  EVENT="stop"
+fi
+
+if [ -z "$AGENT_TYPE" ]; then
+  AGENT_TYPE="claude"
+fi
+
+json_escape() {
+  printf '%s' "$1" | tr '\\n' ' ' | sed 's/\\\\/\\\\\\\\/g; s/"/\\\\"/g; s/\\r/ /g; s/\\t/ /g'
+}
+
+CWD_JSON=$(json_escape "$CWD")
+SESSION_ID_JSON=$(json_escape "$SESSION_ID")
+AGENT_TYPE_JSON=$(json_escape "$AGENT_TYPE")
+SESSION_FIELD=""
+if [ -n "$SESSION_ID_JSON" ]; then
+  SESSION_FIELD=",\\"sessionId\\":\\"$SESSION_ID_JSON\\""
+fi
+AGENT_FIELD=""
+if [ -n "$AGENT_TYPE_JSON" ]; then
+  AGENT_FIELD=",\\"agentType\\":\\"$AGENT_TYPE_JSON\\""
+fi
 
 curl -s -X POST "http://127.0.0.1:$PORT/notify" \\
   -H "Authorization: Bearer $TOKEN" \\
   -H "Content-Type: application/json" \\
-  -d "{\\"cwd\\":\\"$CWD\\",\\"event\\":\\"$EVENT\\",\\"sessionId\\":\\"$SESSION_ID\\"}" \\
+  -d "{\\"cwd\\":\\"$CWD_JSON\\",\\"event\\":\\"$EVENT\\"$SESSION_FIELD$AGENT_FIELD}" \\
   --max-time 2 \\
   >/dev/null 2>&1 || true
 `
@@ -1175,38 +1368,33 @@ curl -s -X POST "http://127.0.0.1:$PORT/notify" \\
     fs.writeFileSync(scriptPath, scriptContent, { mode: 0o755 })
 
     // 2. 備份並 merge settings.json
-    let settings: any = {}
+    let settings: JsonObject = {}
     let backupPath: string | null = null
     if (fs.existsSync(settingsPath)) {
       backupPath = `${settingsPath}.backup-${Date.now()}`
       fs.copyFileSync(settingsPath, backupPath)
+      backupPaths.push(backupPath)
       try {
-        settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
-        if (typeof settings !== 'object' || settings === null) settings = {}
+        settings = parseJsonObject(settingsPath)
       } catch {
         return { success: false, error: 'Failed to parse existing settings.json' }
       }
     }
 
-    if (!settings.hooks || typeof settings.hooks !== 'object') {
-      settings.hooks = {}
-    }
+    const settingsHooks = ensureHooksObject(settings)
 
     const addHookCommand = (hookName: 'Stop' | 'Notification', cmdSuffix: string) => {
-      if (!Array.isArray(settings.hooks[hookName])) {
-        settings.hooks[hookName] = []
+      if (!Array.isArray(settingsHooks[hookName])) {
+        settingsHooks[hookName] = []
       }
-      const alreadyExists = settings.hooks[hookName].some((entry: any) =>
-        entry && Array.isArray(entry.hooks) && entry.hooks.some((cmd: any) =>
-          cmd && typeof cmd.command === 'string' && cmd.command.includes('better-agent-notify')
-        )
-      )
-      if (alreadyExists) return
-      settings.hooks[hookName].push({
+      const hookList = settingsHooks[hookName] as unknown[]
+      // 先移除舊版 entry（不論第二參數有無），確保 reinstall 會更新到新版命令
+      stripNotifyEntries(hookList)
+      hookList.push({
         matcher: '',
         hooks: [{
           type: 'command',
-          command: `~/.claude/hooks/better-agent-notify.sh ${cmdSuffix}`
+          command: `${notifyHookCommand} ${cmdSuffix} claude`
         }]
       })
     }
@@ -1216,12 +1404,55 @@ curl -s -X POST "http://127.0.0.1:$PORT/notify" \\
 
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
 
+    // 3. 啟用 Codex hooks feature（~/.codex/config.toml）
+    if (!fs.existsSync(codexDir)) {
+      fs.mkdirSync(codexDir, { recursive: true })
+    }
+    let codexConfigContent = ''
+    if (fs.existsSync(codexConfigPath)) {
+      const codexConfigBackup = `${codexConfigPath}.backup-${Date.now()}`
+      fs.copyFileSync(codexConfigPath, codexConfigBackup)
+      backupPaths.push(codexConfigBackup)
+      codexConfigContent = fs.readFileSync(codexConfigPath, 'utf-8')
+    }
+    fs.writeFileSync(codexConfigPath, enableCodexHooksFeature(codexConfigContent))
+
+    // 4. 合併 Codex hooks.json 的 Stop hook
+    let codexHooks: JsonObject = {}
+    if (fs.existsSync(codexHooksPath)) {
+      const codexHooksBackup = `${codexHooksPath}.backup-${Date.now()}`
+      fs.copyFileSync(codexHooksPath, codexHooksBackup)
+      backupPaths.push(codexHooksBackup)
+      try {
+        codexHooks = parseJsonObject(codexHooksPath)
+      } catch {
+        return { success: false, error: 'Failed to parse existing ~/.codex/hooks.json' }
+      }
+    }
+    const codexHookRoot = ensureHooksObject(codexHooks)
+    if (!Array.isArray(codexHookRoot.Stop)) {
+      codexHookRoot.Stop = []
+    }
+    const codexStopHooks = codexHookRoot.Stop as unknown[]
+    stripNotifyEntries(codexStopHooks)
+    codexStopHooks.push({
+      matcher: '*',
+      hooks: [{
+        type: 'command',
+        command: `${notifyHookCommand} stop codex`
+      }]
+    })
+    fs.writeFileSync(codexHooksPath, JSON.stringify(codexHooks, null, 2))
+
     return {
       success: true,
       scriptPath,
       settingsPath,
+      codexConfigPath,
+      codexHooksPath,
       backupPath,
-      backedUp: backupPath !== null
+      backupPaths,
+      backedUp: backupPaths.length > 0
     }
   } catch (e: any) {
     return { success: false, error: e?.message || 'Unknown error' }

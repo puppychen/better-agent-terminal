@@ -10,8 +10,9 @@ export interface NotifyConfig {
 export interface NotifyEvent {
   cwd: string
   event: 'stop' | 'wait'
-  /** Claude session UUID（hook 從 stdin JSON 解析的 session_id；舊版 hook 可能為空） */
+  /** Claude/Codex session UUID（hook 從 stdin JSON 解析的 session_id；舊版 hook 可能為空） */
   sessionId?: string
+  agentType?: 'claude' | 'codex'
   meta?: { tool?: string; description?: string }
 }
 
@@ -128,6 +129,7 @@ export class NotifyServer {
           cwd: parsed.cwd,
           event: parsed.event,
           sessionId: typeof parsed.sessionId === 'string' && parsed.sessionId.length > 0 ? parsed.sessionId : undefined,
+          agentType: parsed.agentType === 'claude' || parsed.agentType === 'codex' ? parsed.agentType : undefined,
           meta: parsed.meta && typeof parsed.meta === 'object' ? parsed.meta : undefined
         }
         try {

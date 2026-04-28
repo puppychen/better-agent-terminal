@@ -3,9 +3,7 @@ import type { Workspace } from '../types'
 import { PRESET_ROLES } from '../types'
 import { terminalStore } from '../stores/terminal-store'
 
-interface AgentStatus {
-  type: 'claude'
-}
+type AgentKind = 'claude' | 'codex'
 
 interface SidebarProps {
   workspaces: Workspace[]
@@ -24,7 +22,7 @@ interface SidebarProps {
   onOpenAbout: () => void
   onCreateEmbeddedTerminal?: (workspaceId: string, cwd: string, options?: {
     type?: 'shell' | 'agent'
-    agentType?: 'claude'
+    agentType?: 'claude' | 'codex'
     initialCommand?: string
     claudeSessionId?: string
     label?: string
@@ -32,6 +30,8 @@ interface SidebarProps {
   /** 統一由父層處理：已有 active agent → 切過去；否則開 launch dialog */
   onLaunchAgent?: (workspaceId: string, cwd: string) => void
   width?: number
+  /** 通知點擊強制聚焦訊號 — 每次遞增時，Sidebar 會強制把 group 同步到 active workspace 的 group */
+  focusNonce?: number
 }
 
 function getRoleColor(role?: string): string {
@@ -57,7 +57,8 @@ export function Sidebar({
   onOpenAbout,
   onCreateEmbeddedTerminal,
   onLaunchAgent,
-  width
+  width,
+  focusNonce
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -163,31 +164,40 @@ export function Sidebar({
     }
   }, [groups, activeGroup])
 
-  // Auto-switch group only when activeWorkspaceId actually changes (e.g. "go to existing" action)
+  // Auto-switch group when:
+  //   1) activeWorkspaceId actually changes (e.g. "go to existing" action)
+  //   2) focusNonce changes (notification click — force re-sync even if workspace unchanged)
   const prevActiveWorkspaceId = useRef(activeWorkspaceId)
+  const prevFocusNonce = useRef(focusNonce ?? 0)
   useEffect(() => {
-    if (activeWorkspaceId && activeWorkspaceId !== prevActiveWorkspaceId.current) {
-      const ws = workspaces.find(w => w.id === activeWorkspaceId)
-      if (ws) {
-        setActiveGroup(ws.group || 'Others')
-      }
-    }
+    const workspaceChanged = activeWorkspaceId !== prevActiveWorkspaceId.current
+    const focusChanged = (focusNonce ?? 0) !== prevFocusNonce.current
     prevActiveWorkspaceId.current = activeWorkspaceId
-  }, [activeWorkspaceId, workspaces])
+    prevFocusNonce.current = focusNonce ?? 0
+    if (!activeWorkspaceId) return
+    if (!workspaceChanged && !focusChanged) return
+    const ws = workspaces.find(w => w.id === activeWorkspaceId)
+    if (ws) {
+      setActiveGroup(ws.group || 'Others')
+    }
+  }, [activeWorkspaceId, workspaces, focusNonce])
 
   // Subscribe to embedded terminal store for agent indicators
   useEffect(() => {
     return terminalStore.subscribe(() => setEmbeddedTerminals(terminalStore.getState()))
   }, [])
 
-  // Derive agent statuses from embedded terminal store
+  // Derive agent statuses (unique agent kinds per workspace) from embedded terminal store
   const agentStatuses = useMemo(() => {
-    const statuses: Record<string, AgentStatus | null> = {}
+    const statuses: Record<string, AgentKind[]> = {}
     for (const ws of workspaces) {
-      const hasAgent = embeddedTerminals.terminals.some(
-        t => t.workspaceId === ws.id && t.type === 'agent'
-      )
-      statuses[ws.id] = hasAgent ? { type: 'claude' } : null
+      const kinds = new Set<AgentKind>()
+      for (const t of embeddedTerminals.terminals) {
+        if (t.workspaceId === ws.id && t.type === 'agent') {
+          kinds.add((t.agentType || 'claude') as AgentKind)
+        }
+      }
+      statuses[ws.id] = Array.from(kinds)
     }
     return statuses
   }, [workspaces, embeddedTerminals])
@@ -206,7 +216,7 @@ export function Sidebar({
     const counts: Record<string, number> = {}
     groups.forEach(g => { counts[g] = 0 })
     workspaces.forEach(ws => {
-      if (agentStatuses[ws.id]) {
+      if (agentStatuses[ws.id] && agentStatuses[ws.id].length > 0) {
         const g = ws.group || 'Others'
         counts[g] = (counts[g] || 0) + 1
       }
@@ -234,6 +244,7 @@ export function Sidebar({
         terminalId: t.id,
         workspaceId: t.workspaceId,
         unread: !!t.unread,
+        agentType: (t.agentType || 'claude') as 'claude' | 'codex',
         workspaceName: workspaces.find(w => w.id === t.workspaceId)?.alias
           || workspaces.find(w => w.id === t.workspaceId)?.name
           || '...'
@@ -457,12 +468,11 @@ export function Sidebar({
     setGroupContextMenuPos(null)
   }
 
-  const handleAgentIndicatorClick = async (workspace: Workspace, _status: AgentStatus, e: React.MouseEvent) => {
+  const handleAgentIndicatorClick = async (workspace: Workspace, kind: AgentKind, e: React.MouseEvent) => {
     e.stopPropagation()
     onSelectWorkspace(workspace.id)
-    // Switch to the agent terminal tab in right panel
     const agentTerm = terminalStore.getTerminalsForWorkspace(workspace.id)
-      .find(t => t.type === 'agent')
+      .find(t => t.type === 'agent' && (t.agentType || 'claude') === kind)
     if (agentTerm) {
       await terminalStore.setActiveTerminal(agentTerm.id)
     }
@@ -545,13 +555,18 @@ export function Sidebar({
             onDrop={(e) => handleDrop(workspace.id, e)}
           >
             <div className="workspace-item-content">
-              {/* Agent indicator */}
-              {agentStatuses[workspace.id] && (
-                <span
-                  className="agent-indicator active"
-                  title={`${agentStatuses[workspace.id]!.type} running`}
-                  onClick={(e) => handleAgentIndicatorClick(workspace, agentStatuses[workspace.id]!, e)}
-                />
+              {/* Agent indicators (one dot per agent kind, stacked vertically) */}
+              {agentStatuses[workspace.id] && agentStatuses[workspace.id].length > 0 && (
+                <div className="agent-indicator-stack">
+                  {agentStatuses[workspace.id].map(kind => (
+                    <span
+                      key={kind}
+                      className={`agent-indicator active agent-indicator-${kind}`}
+                      title={`${kind === 'codex' ? '[X]' : '[C]'} running`}
+                      onClick={(e) => handleAgentIndicatorClick(workspace, kind, e)}
+                    />
+                  ))}
+                </div>
               )}
               {/* Unread notification badge */}
               {unreadCounts[workspace.id] > 0 && (
@@ -763,8 +778,10 @@ export function Sidebar({
                   className={`agent-overview-item ${agent.unread ? 'unread' : ''}`}
                   onClick={() => handleAgentOverviewClick(agent)}
                 >
-                  <span className="agent-overview-dot" />
-                  <span className="agent-overview-name">{agent.workspaceName}</span>
+                  <span className={`agent-overview-dot agent-overview-dot-${agent.agentType}`} />
+                  <span className="agent-overview-name">
+                    {agent.agentType === 'codex' ? '[X] ' : '[C] '}{agent.workspaceName}
+                  </span>
                   {agent.unread && <span className="agent-overview-unread-dot" title="Unread notification" />}
                 </div>
               ))}
