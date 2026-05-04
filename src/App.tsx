@@ -57,6 +57,12 @@ function AppContent() {
     localStorage.setItem('sidebar-width', String(sidebarWidth))
   }, [sidebarWidth])
 
+  // Workspace 切換時恢復該 workspace 上次選中的 tab（只存在記憶體，不寫入磁碟）。
+  useEffect(() => {
+    if (!state.activeWorkspaceId) return
+    void terminalStore.restoreActiveForWorkspace(state.activeWorkspaceId)
+  }, [state.activeWorkspaceId])
+
   const handleResizeStart = useCallback(() => {
     isDragging.current = true
     document.body.style.cursor = 'col-resize'
@@ -150,11 +156,7 @@ function AppContent() {
     // 點 macOS 通知 → 切換到對應 workspace + terminal
     const unsubFocusTerminal = window.electronAPI.notify?.onFocusTerminal?.(({ cwd, sessionId, agentType }) => {
       const target = findAgentTarget(cwd, sessionId, agentType)
-      console.log('[notify-debug] focus-terminal', { cwd, sessionId, agentType, found: !!target, targetWs: target?.workspaceId, targetType: target?.agentType })
-      if (!target) {
-        console.warn('[notify-debug] no target found, dump agents:', terminalStore.getState().terminals.filter(t => t.type === 'agent').map(t => ({ id: t.id, cwd: t.cwd, agentType: t.agentType, workspaceId: t.workspaceId })))
-        return
-      }
+      if (!target) return
       if (target.workspaceId !== workspaceStore.getState().activeWorkspaceId) {
         workspaceStore.setActiveWorkspace(target.workspaceId)
       }
@@ -344,12 +346,14 @@ function AppContent() {
   }, [])
 
   // === Codex Agent launch ===
+  // Codex CLI v0.128+ 移除 --full-auto，改用 -s workspace-write -a never（等同舊 full-auto 語意）
+  // resume 子命令不收 -s/-a 主旗標，只能用 -c config override 達到相同效果
   // resume --last 接最近 session；首次無歷史時 fallback 新建
   const handleAddCodexAgent = useCallback((workspaceId: string, cwd: string) => {
     terminalStore.createTerminal(workspaceId, cwd, {
       type: 'agent',
       agentType: 'codex',
-      initialCommand: 'codex resume --last --full-auto || codex --full-auto'
+      initialCommand: 'codex resume --last -c approval_policy=never -c sandbox_mode=workspace-write || codex -s workspace-write -a never'
     })
   }, [])
 

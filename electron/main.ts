@@ -1067,7 +1067,6 @@ function startNotifyServer(): void {
         const cleanup = () => { activeNotifications.delete(notification) }
         // 點通知 → 聚焦視窗 + 切換到該 workspace/terminal
         notification.on('click', () => {
-          console.log('[notify-debug] click', { agentType: event.agentType, cwd: event.cwd })
           if (mainWindow && !mainWindow.isDestroyed()) {
             if (mainWindow.isMinimized()) mainWindow.restore()
             mainWindow.show()

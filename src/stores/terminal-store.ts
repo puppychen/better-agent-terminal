@@ -9,6 +9,8 @@ class TerminalStore {
     activeTerminalId: null
   }
   private listeners: Set<Listener> = new Set()
+  /** Per-workspace 上次選定的 terminal id（in-memory，重啟不持久化） */
+  private workspaceLastActive: Map<string, string> = new Map()
 
   getState(): TerminalState { return this.state }
 
@@ -19,6 +21,10 @@ class TerminalStore {
 
   private notify(): void {
     this.listeners.forEach(l => l())
+  }
+
+  private rememberWorkspaceActive(workspaceId: string, terminalId: string): void {
+    this.workspaceLastActive.set(workspaceId, terminalId)
   }
 
   async createTerminal(workspaceId: string, cwd: string, options?: {
@@ -64,6 +70,7 @@ class TerminalStore {
       terminals: [...this.state.terminals, instance],
       activeTerminalId: id
     }
+    this.rememberWorkspaceActive(workspaceId, id)
     this.notify()
 
     // activate 對 files tab 是 no-op（main 端 instance map 不存在，IPC handler 會 early return）
@@ -78,6 +85,9 @@ class TerminalStore {
     const target = this.state.terminals.find(t => t.id === id)
     const needsClearUnread = target?.unread === true
 
+    // 記錄該 workspace 最後選的 terminal（in-memory）
+    if (target) this.rememberWorkspaceActive(target.workspaceId, id)
+
     // prev === id 且無 unread 要清 → 真正不用動
     if (prev === id && !needsClearUnread) return
 
@@ -89,6 +99,38 @@ class TerminalStore {
       : this.state.terminals
     this.state = { ...this.state, terminals, activeTerminalId: id }
     this.notify()
+  }
+
+  /** 回傳該 workspace 上次選定的 terminal id（已驗證仍存在）；無記錄回 null */
+  getLastActiveForWorkspace(workspaceId: string): string | null {
+    const id = this.workspaceLastActive.get(workspaceId)
+    if (!id) return null
+    return this.state.terminals.some(t => t.id === id && t.workspaceId === workspaceId) ? id : null
+  }
+
+  /** 恢復 workspace 上次 active terminal；僅存在記憶體，重啟後不保留。 */
+  async restoreActiveForWorkspace(workspaceId: string): Promise<void> {
+    const wsTerminals = this.getTerminalsForWorkspace(workspaceId)
+    if (wsTerminals.length === 0) {
+      if (this.state.activeTerminalId !== null) {
+        this.state = { ...this.state, activeTerminalId: null }
+        this.notify()
+      }
+      return
+    }
+
+    const current = this.state.activeTerminalId
+    if (wsTerminals.some(t => t.id === current)) return
+
+    const lastId = this.getLastActiveForWorkspace(workspaceId)
+    if (lastId) {
+      await this.setActiveTerminal(lastId)
+      return
+    }
+
+    // 首次切到 workspace 時保留既有行為：優先第一個 agent，沒有才用最後一個 tab。
+    const agentTerm = wsTerminals.find(t => t.type === 'agent')
+    await this.setActiveTerminal((agentTerm || wsTerminals[wsTerminals.length - 1]).id)
   }
 
   /**
@@ -127,6 +169,7 @@ class TerminalStore {
     const next = [...this.state.terminals]
     next[idx] = { ...next[idx], filesActiveRequest: { path: relativePath, nonce: this.filesRequestNonce } }
     this.state = { ...this.state, terminals: next, activeTerminalId: filesTerm.id }
+    this.rememberWorkspaceActive(workspaceId, filesTerm.id)
     this.notify()
   }
 
@@ -153,13 +196,30 @@ class TerminalStore {
   }
 
   async killTerminal(id: string): Promise<void> {
+    const removed = this.state.terminals.find(t => t.id === id)
     await window.electronAPI.pty.kill(id)
 
     const terminals = this.state.terminals.filter(t => t.id !== id)
     let activeTerminalId = this.state.activeTerminalId
 
+    // 清掉指向被殺 terminal 的 per-workspace 記錄
+    for (const [wsId, lastId] of Array.from(this.workspaceLastActive.entries())) {
+      if (lastId === id) this.workspaceLastActive.delete(wsId)
+    }
+
     if (activeTerminalId === id) {
-      activeTerminalId = terminals[terminals.length - 1]?.id ?? null
+      const sameWorkspace = removed
+        ? terminals.filter(t => t.workspaceId === removed.workspaceId)
+        : []
+      const agentTerm = sameWorkspace.find(t => t.type === 'agent')
+      activeTerminalId = agentTerm?.id ?? sameWorkspace[sameWorkspace.length - 1]?.id ?? null
+      if (removed) {
+        if (sameWorkspace.length > 0 && activeTerminalId) {
+          this.rememberWorkspaceActive(removed.workspaceId, activeTerminalId)
+        } else {
+          this.workspaceLastActive.delete(removed.workspaceId)
+        }
+      }
     }
 
     this.state = { terminals, activeTerminalId }
@@ -184,6 +244,7 @@ class TerminalStore {
     for (const t of this.state.terminals) {
       await window.electronAPI.pty.kill(t.id)
     }
+    this.workspaceLastActive.clear()
     this.state = { terminals: [], activeTerminalId: null }
     this.notify()
   }

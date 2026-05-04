@@ -313,6 +313,7 @@ export function MainPanel({ activeWorkspaceId, workspaceCwd, onRequestCloseTab, 
               <TerminalPanel
                 terminalId={t.id}
                 isActive={t.id === activeTerminalId}
+                agentType={t.agentType}
                 onCycleTab={handleCycleTab}
                 onActivateLink={handleActivateLink}
               />

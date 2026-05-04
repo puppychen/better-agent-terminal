@@ -272,20 +272,9 @@ export function Sidebar({
     await terminalStore.setActiveTerminal(agent.terminalId)
   }
 
-  // When selecting a workspace, switch to its most recent terminal
+  // App restores the workspace's last active terminal after activeWorkspaceId changes.
   const handleWorkspaceSelect = (workspace: Workspace) => {
     onSelectWorkspace(workspace.id)
-    // Auto-switch to the workspace's last active terminal if any
-    const wsTerminals = terminalStore.getTerminalsForWorkspace(workspace.id)
-    if (wsTerminals.length > 0) {
-      const current = terminalStore.getState().activeTerminalId
-      const belongsToWs = wsTerminals.some(t => t.id === current)
-      if (!belongsToWs) {
-        // 優先切到 agent terminal，沒有才切最後一個
-        const agentTerm = wsTerminals.find(t => t.type === 'agent')
-        terminalStore.setActiveTerminal((agentTerm || wsTerminals[wsTerminals.length - 1]).id)
-      }
-    }
   }
 
   const handleOpenWithIde = (folderPath: string, appName: string) => {

@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react'
 import type { FsDirEntry, GitFileStatus } from '../types/electron'
 import { loadEditorRuntime, loadLanguageExtension, type EditorRuntime } from './files-editor-runtime'
+import { loadMarkdownRuntime } from './files-markdown-runtime'
 import { FileConflictDialog } from './FileConflictDialog'
 import { useToast } from './Toast'
 
@@ -21,6 +22,13 @@ const readWrapPref = (): boolean => {
 }
 const writeWrapPref = (wrap: boolean): void => {
   try { localStorage.setItem(WRAP_PREF_KEY, wrap ? '1' : '0') } catch { /* ignore */ }
+}
+
+const MD_EXT = new Set(['md', 'markdown', 'mdx'])
+function isMarkdownPath(p?: string | null): boolean {
+  if (!p) return false
+  const ext = p.split('.').pop()?.toLowerCase()
+  return ext ? MD_EXT.has(ext) : false
 }
 
 const TREE_WIDTH_KEY = 'baw.filesTab.treeWidth'
@@ -47,6 +55,10 @@ interface OpenFileState {
   size: number
   dirty: boolean
   externallyChanged?: boolean
+  /** Markdown 檔的檢視模式；非 md 檔忽略 */
+  mode?: 'edit' | 'preview'
+  /** 進 preview 模式時抓的 EditorView 最新文字（含未存檔變更） */
+  previewSnapshot?: string
 }
 
 interface ConflictState {
@@ -116,6 +128,11 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
   const openFilesRef = useRef<OpenFileState[]>([])
   const activeFilePathRef = useRef<string | null>(null)
   const saveRef = useRef<() => void>(() => {})
+  const previewToggleRef = useRef<() => void>(() => {})
+  /** 切到 preview 時，Edit→Preview 同步用：cursor 行號（CodeMirror 1-based） */
+  const lastEditCursorLineRef = useRef<Map<string, number>>(new Map())
+  /** Preview→Edit 同步用：preview viewport 頂端附近的 markdown 行號（0-based） */
+  const previewVisibleLineRef = useRef<Map<string, number>>(new Map())
   const isDraggingRef = useRef(false)
   const pendingDraggedWidthRef = useRef<number>(treeWidth)
 
@@ -259,6 +276,11 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
           preventDefault: true,
           run: () => { saveRef.current(); return true }
         }])
+        const previewToggleBinding = keymap.of([{
+          key: 'Mod-Shift-v',
+          preventDefault: true,
+          run: () => { previewToggleRef.current(); return true }
+        }])
         const state = EditorState.create({
           doc: f.content,
           extensions: [
@@ -269,6 +291,7 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
             oneDark,
             wrapCompartment.of(wrap ? EditorView.lineWrapping : []),
             saveBinding,
+            previewToggleBinding,
             customSearchBinding,
             keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap.filter(b => b.key !== 'Mod-f')]),
             updateListener,
@@ -429,6 +452,85 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
   }, [workspaceCwd, refreshGitStatuses])
 
   useEffect(() => { saveRef.current = () => { performSave() } }, [performSave])
+
+  // === Edit/Preview toggle for markdown files ===
+  const togglePreview = useCallback((): void => {
+    const path = activeFilePathRef.current
+    if (!path || !isMarkdownPath(path)) return
+    const cur = openFilesRef.current.find(f => f.path === path)
+    if (!cur) return
+    const nextMode: 'edit' | 'preview' = cur.mode === 'preview' ? 'edit' : 'preview'
+
+    let snapshot: string | undefined
+    if (nextMode === 'preview') {
+      // Edit → Preview：記下當前 cursor 行號 + 抓最新文字（含未存檔變更）
+      const entry = editorViewsRef.current.get(path)
+      if (entry) {
+        const head = entry.view.state.selection.main.head
+        const line = entry.view.state.doc.lineAt(head).number  // 1-based
+        lastEditCursorLineRef.current.set(path, line)
+        snapshot = entry.view.state.doc.toString()
+      }
+    }
+    // Preview → Edit 的 scroll/cursor 同步移到 useLayoutEffect 偵測 mode 變化處理
+    setOpenFiles(prev => prev.map(f => f.path === path
+      ? { ...f, mode: nextMode, previewSnapshot: nextMode === 'preview' ? snapshot : undefined }
+      : f
+    ))
+  }, [])
+
+  useEffect(() => { previewToggleRef.current = togglePreview }, [togglePreview])
+
+  // === isActive 切回 true 時：對所有 EditorView 強制 measure + 對 active view 重新 focus ===
+  // CodeMirror 在 parent 從 visibility:hidden 切回 visible 後，layout cache 可能 stale，
+  // input handling 會失效；requestMeasure() 重算後恢復。
+  useEffect(() => {
+    if (!isActive) return
+    // 等下一個 frame 確保 visibility/layout 已生效
+    const raf = requestAnimationFrame(() => {
+      for (const [, { view }] of editorViewsRef.current) {
+        try { view.requestMeasure() } catch { /* ignore */ }
+      }
+      const activePath = activeFilePathRef.current
+      if (activePath) {
+        const entry = editorViewsRef.current.get(activePath)
+        const cur = openFilesRef.current.find(f => f.path === activePath)
+        // edit 模式才把焦點還給 editor；preview 模式不搶
+        if (entry && cur?.mode !== 'preview') {
+          try { entry.view.focus() } catch { /* ignore */ }
+        }
+      }
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [isActive])
+
+  // 偵測 mode 從 'preview' 變回 'edit' 時，把 editor cursor + scroll 拉到 preview 上次看到的行
+  // 用 useLayoutEffect 確保 DOM 已切過 visibility，scrollIntoView 才會生效
+  const prevModesRef = useRef<Map<string, 'edit' | 'preview'>>(new Map())
+  useLayoutEffect(() => {
+    for (const f of openFiles) {
+      const prevMode = prevModesRef.current.get(f.path)
+      const curMode = f.mode ?? 'edit'
+      if (prevMode === 'preview' && curMode === 'edit') {
+        const entry = editorViewsRef.current.get(f.path)
+        const previewLine = previewVisibleLineRef.current.get(f.path)
+        if (entry && previewLine != null) {
+          const targetLine = Math.min(previewLine + 1, entry.view.state.doc.lines)
+          const pos = entry.view.state.doc.line(targetLine).from
+          entry.view.dispatch({
+            selection: { anchor: pos },
+            scrollIntoView: true
+          })
+          entry.view.focus()
+        }
+      }
+      prevModesRef.current.set(f.path, curMode)
+    }
+    // 清理已關閉檔案
+    for (const p of Array.from(prevModesRef.current.keys())) {
+      if (!openFiles.find(f => f.path === p)) prevModesRef.current.delete(p)
+    }
+  }, [openFiles])
 
   const handleReload = useCallback(async (): Promise<void> => {
     const path = activeFilePathRef.current
@@ -667,6 +769,13 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
                 onClick={handleToggleWrap}
                 title={wrap ? '關閉自動換行' : '開啟自動換行'}
               >↩</button>
+              {isMarkdownPath(activeFile.path) && (
+                <button
+                  className={`files-tab-viewer-action ${activeFile.mode === 'preview' ? 'active' : ''}`}
+                  onClick={togglePreview}
+                  title={activeFile.mode === 'preview' ? '切換到編輯 (Cmd+Shift+V)' : '切換到預覽 (Cmd+Shift+V)'}
+                >👁</button>
+              )}
               <button className="files-tab-viewer-action" onClick={handleReload} title="重新載入（捨棄變更）">↻</button>
               <button className="files-tab-viewer-action" onClick={handleOpenInIDE} title="以系統預設應用程式開啟">↗</button>
             </div>
@@ -682,16 +791,32 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
           )}
           {/* 所有 open file 的 container 都 render，用 class 控制顯示 */}
           <div className="files-tab-editor-area">
-            {openFiles.map(f => (
-              <div
-                key={f.path}
-                ref={(el) => {
-                  if (el) editorContainerRefs.current.set(f.path, el)
-                  else editorContainerRefs.current.delete(f.path)
-                }}
-                className={`files-tab-editor-container ${f.path === activeFilePath ? 'active' : ''}`}
-              />
-            ))}
+            {openFiles.map(f => {
+              const isActiveFile = f.path === activeFilePath
+              const isPreview = isActiveFile && f.mode === 'preview' && isMarkdownPath(f.path)
+              return (
+                <Fragment key={f.path}>
+                  <div
+                    ref={(el) => {
+                      if (el) editorContainerRefs.current.set(f.path, el)
+                      else editorContainerRefs.current.delete(f.path)
+                    }}
+                    className={`files-tab-editor-container ${isActiveFile && !isPreview ? 'active' : ''}`}
+                  />
+                  {isMarkdownPath(f.path) && (
+                    <MarkdownPreview
+                      filePath={f.path}
+                      content={f.previewSnapshot ?? f.content}
+                      active={isPreview}
+                      initialLine={lastEditCursorLineRef.current.get(f.path) ?? null}
+                      onVisibleLineChange={(line) => {
+                        previewVisibleLineRef.current.set(f.path, line)
+                      }}
+                    />
+                  )}
+                </Fragment>
+              )
+            })}
             {searchUI && activeFile && (
               <div className="files-tab-search-box" onClick={(e) => e.stopPropagation()}>
                 <input
@@ -760,6 +885,133 @@ export function FilesTab({ workspaceCwd, isActive, request }: FilesTabProps) {
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+// ===================================================================
+// MarkdownPreview — lazy-load markdown-it 渲染 + 雙向行級捲動同步
+// ===================================================================
+
+interface MarkdownPreviewProps {
+  filePath: string
+  content: string
+  active: boolean
+  /** 切到 preview 時 editor cursor 所在行（CodeMirror 1-based）— null 不主動 scroll */
+  initialLine: number | null
+  /** preview viewport 頂端附近的行號（markdown-it 0-based）回呼，給 Preview→Edit 用 */
+  onVisibleLineChange: (line: number) => void
+}
+
+function MarkdownPreview({ content, active, initialLine, onVisibleLineChange }: MarkdownPreviewProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const [html, setHtml] = useState<string>('')
+  const [error, setError] = useState<string | null>(null)
+  const observerRef = useRef<IntersectionObserver | null>(null)
+  const onVisibleLineChangeRef = useRef(onVisibleLineChange)
+  useEffect(() => { onVisibleLineChangeRef.current = onVisibleLineChange }, [onVisibleLineChange])
+
+  // 渲染：active 時才執行（lazy load markdown-it）
+  // 用 setTimeout(0) 讓出主執行緒一拍，大檔渲染（>500KB）才不會 block paint
+  useEffect(() => {
+    if (!active) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    loadMarkdownRuntime()
+      .then(rt => {
+        if (cancelled) return
+        timer = setTimeout(() => {
+          if (cancelled) return
+          try {
+            setHtml(rt.render(content))
+            setError(null)
+          } catch (e: any) {
+            setError(e?.message || 'Markdown 渲染失敗')
+          }
+        }, 0)
+      })
+      .catch(e => {
+        if (!cancelled) setError(e?.message || 'Markdown runtime 載入失敗')
+      })
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [active, content])
+
+  // Edit→Preview：渲染後 scroll 到 initialLine 對應段落
+  useEffect(() => {
+    if (!active || !html || initialLine == null || !containerRef.current) return
+    // markdown-it 0-based vs CodeMirror 1-based
+    const targetMdLine = initialLine - 1
+    // 優先精準匹配；找不到時往前找最近的（block 不一定每行都有）
+    let target: HTMLElement | null = null
+    for (let l = targetMdLine; l >= 0; l--) {
+      const el = containerRef.current.querySelector(`[data-source-line="${l}"]`) as HTMLElement | null
+      if (el) { target = el; break }
+    }
+    if (target) {
+      // 用 requestAnimationFrame 確保 visibility 已切過來，scrollIntoView 才會生效
+      requestAnimationFrame(() => target!.scrollIntoView({ block: 'start', behavior: 'auto' }))
+    }
+  }, [active, html, initialLine])
+
+  // Preview→Edit：用 IntersectionObserver 追蹤 viewport 頂端附近的元素
+  useEffect(() => {
+    if (!active || !html || !containerRef.current) return
+    const root = containerRef.current
+    // 取 viewport 頂端 0~80px 視為「目前閱讀位置」
+    observerRef.current?.disconnect()
+    const observed = new Map<Element, number>()  // element → markdown line
+    const elements = root.querySelectorAll<HTMLElement>('[data-source-line]')
+    elements.forEach(el => {
+      const ln = Number(el.getAttribute('data-source-line'))
+      if (Number.isFinite(ln)) observed.set(el, ln)
+    })
+    const obs = new IntersectionObserver((entries) => {
+      // 找正在 intersect 且離 top 最近的元素
+      let bestLine: number | null = null
+      let bestTop = Infinity
+      entries.forEach(en => {
+        if (!en.isIntersecting) return
+        const top = en.boundingClientRect.top
+        if (top >= -10 && top < bestTop) {
+          bestTop = top
+          bestLine = observed.get(en.target) ?? null
+        }
+      })
+      if (bestLine != null) onVisibleLineChangeRef.current(bestLine)
+    }, { root, rootMargin: '0px 0px -80% 0px', threshold: 0 })
+    elements.forEach(el => obs.observe(el))
+    observerRef.current = obs
+    return () => { obs.disconnect() }
+  }, [active, html])
+
+  // 攔截連結點擊，改開外部瀏覽器（避免 Electron 視窗被導覽走）
+  const handleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const a = (e.target as Element).closest('a') as HTMLAnchorElement | null
+    if (!a) return
+    const href = a.getAttribute('href')
+    if (!href) return
+    e.preventDefault()
+    // 內部錨點（#xxx）：scroll 到目標元素
+    if (href.startsWith('#')) {
+      const id = href.slice(1)
+      const target = containerRef.current?.querySelector(`#${CSS.escape(id)}`) as HTMLElement | null
+      target?.scrollIntoView({ block: 'start' })
+      return
+    }
+    // 其他一律用系統瀏覽器開
+    if (/^https?:\/\//i.test(href)) {
+      window.electronAPI.shell.openExternal(href)
+    }
+  }, [])
+
+  return (
+    <div
+      ref={containerRef}
+      className={`files-tab-preview-container ${active ? 'active' : ''}`}
+      onClick={handleClick}
+    >
+      {error && <div className="files-tab-conflict-banner">{error}</div>}
+      <div className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} />
     </div>
   )
 }

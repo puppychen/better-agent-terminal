@@ -74,7 +74,8 @@ export async function loadLanguageExtension(filename: string): Promise<unknown[]
       return [m.json()]
     }
     case 'md':
-    case 'markdown': {
+    case 'markdown':
+    case 'mdx': {
       const m = await import('@codemirror/lang-markdown')
       return [m.markdown()]
     }

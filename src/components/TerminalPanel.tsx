@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebglAddon } from '@xterm/addon-webgl'
+import type { CodeAgentType } from '../types'
 import '@xterm/xterm/css/xterm.css'
 
 // WebGL context manager — LRU eviction at 12 contexts (Chromium limit: 16, reserve 4)
@@ -65,6 +66,7 @@ function detachWebgl(terminalId: string): void {
 interface TerminalPanelProps {
   terminalId: string
   isActive: boolean
+  agentType?: CodeAgentType
   onCycleTab?: (direction: 1 | -1) => void
   /** Cmd+click 終端輸出的檔案路徑時觸發。text 為原始 match（含可能的 :line:col 後綴） */
   onActivateLink?: (text: string) => void
@@ -75,15 +77,17 @@ interface TerminalPanelProps {
 const FILE_LINK_REGEX = /(?<![\w/:])([\w./~\-]+\.[a-zA-Z]{1,8})(?::(\d+))?(?::(\d+))?(?![\w/])/g
 
 export const TerminalPanel = memo(function TerminalPanel({
-  terminalId, isActive, onCycleTab, onActivateLink
+  terminalId, isActive, agentType, onCycleTab, onActivateLink
 }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const isActiveRef = useRef(isActive)
   const doResizeRef = useRef<(() => void) | null>(null)
+  const agentTypeRef = useRef(agentType)
   const onCycleTabRef = useRef(onCycleTab)
   const onActivateLinkRef = useRef(onActivateLink)
+  useEffect(() => { agentTypeRef.current = agentType }, [agentType])
   useEffect(() => { onCycleTabRef.current = onCycleTab }, [onCycleTab])
   useEffect(() => { onActivateLinkRef.current = onActivateLink }, [onActivateLink])
 
@@ -244,10 +248,10 @@ export const TerminalPanel = memo(function TerminalPanel({
         }, 100)
         return false
       }
-      // Shift+Enter → 送 ESC+CR（等同 Option+Enter），讓 Claude CLI 換行
+      // Codex uses LF (Ctrl+J) for newline; Claude keeps the existing ESC+CR behavior.
       if (event.shiftKey && event.key === 'Enter') {
         event.preventDefault()
-        window.electronAPI.pty.write(terminalId, '\x1b\r')
+        window.electronAPI.pty.write(terminalId, agentTypeRef.current === 'codex' ? '\x0a' : '\x1b\r')
         return false
       }
       // Cmd+C with selection → copy
